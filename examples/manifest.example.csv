@@ -1,0 +1,5 @@
+image,label,group,split
+camera1_monday/frame_00000000.jpg,camera1_monday/frame_00000000.txt,camera1_monday,train
+camera1_tuesday/frame_00000000.jpg,camera1_tuesday/frame_00000000.txt,camera1_tuesday,val
+camera2_wednesday/frame_00000000.jpg,camera2_wednesday/frame_00000000.txt,camera2_wednesday,test
+
