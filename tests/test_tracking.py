@@ -5,9 +5,9 @@ from unittest.mock import patch
 
 import numpy as np
 
-from vision.tracker import Tracker
-from vision.utils import TraceUtils
-from vision.worker import run_video
+from services.video_service import Tracker
+from services.utils import Utils
+from services.video_service import run_video
 
 
 class TrackingTests(unittest.TestCase):
@@ -84,11 +84,11 @@ class TrackingTests(unittest.TestCase):
 
     def test_buffer_seconds_uses_camera_frame_rate(self):
         """Five seconds maps to the source FPS, with legacy frame support."""
-        self.assertEqual(TraceUtils.get_tracking_config({}, frame_rate=30)["track_buffer"], 150)
-        self.assertEqual(TraceUtils.get_tracking_config({}, frame_rate=15)["track_buffer"], 75)
+        self.assertEqual(Utils.get_tracking_config({}, frame_rate=30)["track_buffer"], 150)
+        self.assertEqual(Utils.get_tracking_config({}, frame_rate=15)["track_buffer"], 75)
         settings = {"tracking": {"track_buffer_seconds": 2, "track_buffer": 30}}
-        self.assertEqual(TraceUtils.get_tracking_config(settings, frame_rate=25)["track_buffer"], 50)
-        self.assertEqual(TraceUtils.get_tracking_config({"tracking": {"track_buffer": 7}})["track_buffer"], 7)
+        self.assertEqual(Utils.get_tracking_config(settings, frame_rate=25)["track_buffer"], 50)
+        self.assertEqual(Utils.get_tracking_config({"tracking": {"track_buffer": 7}})["track_buffer"], 7)
 
     def test_default_buffer_recovers_matching_return_after_two_seconds(self):
         """A matching return can survive more than the old 30-frame buffer."""
@@ -127,15 +127,15 @@ class TrackingTests(unittest.TestCase):
         for settings in invalid:
             with self.subTest(settings=settings):
                 with self.assertRaises(ValueError):
-                    TraceUtils.get_tracking_config({"tracking": settings})
+                    Utils.get_tracking_config({"tracking": settings})
 
     def test_worker_enables_detection_and_resets_after_reconnect(self):
         """The --track path lowers detector confidence and notices reconnects."""
-        config = TraceUtils.load_camera_config("config/camera.example.json")
+        config = Utils.load_camera_config("config/camera.example.json")
         frame = np.zeros(self.frame_shape, dtype=np.uint8)
-        with patch("vision.worker.Camera") as camera_class:
-            with patch("vision.worker.Detector") as detector_class:
-                with patch("vision.worker.Tracker") as tracker_class:
+        with patch("services.video_service.Camera") as camera_class:
+            with patch("services.video_service.Detector") as detector_class:
+                with patch("services.video_service.Tracker") as tracker_class:
                     camera = camera_class.return_value
                     camera.get_fps.return_value = 25
                     camera.source_type = "webcam"
@@ -149,7 +149,7 @@ class TrackingTests(unittest.TestCase):
                     camera.read_frame.side_effect = reconnect_and_read
                     detector_class.return_value.detect.return_value = []
                     tracker = tracker_class.return_value
-                    tracker.settings = TraceUtils.get_tracking_config(config)
+                    tracker.settings = Utils.get_tracking_config(config)
                     tracker.update.return_value = []
                     self.assertEqual(run_video(config, True, 1, track=True), 1)
                     tracker_class.assert_called_once_with(config, frame_rate=25)

@@ -1,0 +1,149 @@
+.upload-container {
+  height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(0, 228, 255, 0.3);
+  transition: var(--transition);
+}
+
+.upload-container:hover {
+  border-color: var(--accent-primary);
+  background: rgba(0, 228, 255, 0.05);
+}
+
+.upload-content {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.upload-icon-wrapper {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(0, 228, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary);
+  margin-bottom: 8px;
+}
+
+.upload-content h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.upload-content p {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  max-width: 300px;
+  margin-bottom: 8px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.upload-btn {
+  margin-top: 8px;
+  cursor: pointer;
+}
+
+/* Video Player State */
+.video-player-container {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  aspect-ratio: 16/9;
+}
+
+.video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.custom-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 20px 16px 12px;
+  background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+}
+
+.video-wrapper:hover .custom-controls,
+.custom-controls:hover {
+  transform: translateY(0);
+}
+
+.control-btn {
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.control-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+.progress-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+}
+
+.progress-filled {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 2px;
+}
+
+.control-group {
+  display: flex;
+  gap: 8px;
+}
+
+.video-info {
+  padding: 16px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.video-info h3 {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.file-size {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}

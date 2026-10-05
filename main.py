@@ -5,8 +5,8 @@ import logging
 
 import cv2
 
-from vision.utils import TraceUtils
-from vision.worker import run_video
+from services.utils import Utils
+from services.video_service import run_video
 
 
 # ---------- Command-line settings ----------
@@ -20,6 +20,7 @@ def read_arguments():
     parser.add_argument("--snapshot", help="Save the first labeled frame to an image path")
     parser.add_argument("--detect", action="store_true", help="Enable YOLO person detection")
     parser.add_argument("--track", action="store_true", help="Enable YOLO and ByteTrack IDs")
+    parser.add_argument("--alerts", action="store_true", help="Monitor restricted zones and alert immediately on entry")
     args = parser.parse_args()
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be at least 1")
@@ -34,9 +35,9 @@ def main():
     args = read_arguments()
 
     try:
-        config = TraceUtils.load_camera_config(args.config)
+        config = Utils.load_camera_config(args.config)
         frame_count = run_video(config, args.headless, args.max_frames, args.snapshot,
-                                detect=args.detect, track=args.track)
+                                detect=args.detect, track=args.track, alerts=args.alerts)
         logging.info("Finished. Frames read: %s", frame_count)
         return 0
     except KeyboardInterrupt:

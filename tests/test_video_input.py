@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 import cv2
 import numpy as np
 
-from vision.camera import Camera
-from vision.utils import TraceUtils
-from vision.worker import run_video
+from services.video_service import Camera
+from services.utils import Utils
+from services.video_service import run_video
 
 
 class VideoInputTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class VideoInputTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)
         self.root = Path(self.folder.name)
-        self.config = TraceUtils.load_camera_config("config/camera.example.json")
+        self.config = Utils.load_camera_config("config/camera.example.json")
         self.config["source"] = str(self.root / "sample.avi")
 
     def create_video(self, frame_count=5):
@@ -61,7 +61,7 @@ class VideoInputTests(unittest.TestCase):
 
     def test_cleanup_after_processing_error(self):
         """Release the camera even when later frame processing fails."""
-        with patch("vision.worker.Camera") as camera_class:
+        with patch("services.video_service.Camera") as camera_class:
             camera = camera_class.return_value
             camera.get_fps.return_value = 25
             camera.read_frame.side_effect = RuntimeError("Processing failed")
@@ -80,7 +80,7 @@ class VideoInputTests(unittest.TestCase):
         capture.read.side_effect = [(False, None), (True, frame)]
         camera.capture = capture
         with patch.object(camera, "open", return_value=True) as reopen:
-            with patch("vision.camera.time.sleep"):
+            with patch("services.video_service.time.sleep"):
                 self.assertIs(camera.read_frame(), frame)
         reopen.assert_called_once()
 
@@ -92,7 +92,7 @@ class VideoInputTests(unittest.TestCase):
         capture.read.return_value = (False, None)
         camera.capture = capture
         with patch.object(camera, "open", return_value=False) as reopen:
-            with patch("vision.camera.time.sleep"):
+            with patch("services.video_service.time.sleep"):
                 with self.assertRaises(ConnectionError):
                     camera.read_frame()
         self.assertEqual(reopen.call_count, self.config["reconnect_attempts"])
@@ -113,12 +113,12 @@ class VideoInputTests(unittest.TestCase):
                 path = self.root / "invalid.json"
                 path.write_text(json.dumps(config), encoding="utf-8")
                 with self.assertRaises(ValueError):
-                    TraceUtils.load_camera_config(path)
+                    Utils.load_camera_config(path)
 
     def test_private_source_override(self):
         """Allow credentials to be supplied outside the checked-in JSON."""
         with patch.dict("os.environ", {"TRACE_CAMERA_SOURCE": "0"}):
-            config = TraceUtils.load_camera_config("config/camera.example.json")
+            config = Utils.load_camera_config("config/camera.example.json")
         self.assertEqual(config["source"], "0")
 
 

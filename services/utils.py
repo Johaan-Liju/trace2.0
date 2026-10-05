@@ -1,6 +1,7 @@
 """Shared helpers. Keep repeated configuration and frame operations here."""
 
 import json
+import logging
 import math
 import os
 import tempfile
@@ -11,8 +12,10 @@ import cv2
 import numpy as np
 
 
-class TraceUtils:
+class Utils:
     """Small, reusable functions that do not keep camera state."""
+
+    ZONE_TYPES = ("restricted", "loitering", "crowd", "ignore")
 
     # ---------- Configuration helpers ----------
 
@@ -152,6 +155,22 @@ class TraceUtils:
     # ---------- Frame helpers ----------
 
     @staticmethod
+    def play_alert_sound():
+        """Play the Windows alert sound asynchronously without stopping capture."""
+        try:
+            import winsound
+            winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        except (ImportError, RuntimeError):
+            logging.warning("Alert sound unavailable; the on-screen and terminal alerts remain active.")
+
+    @staticmethod
+    def draw_alert_banner(frame, message):
+        """Show the latest entry below the camera timestamp in the preview."""
+        preview = frame.copy()
+        Utils.draw_text_label(preview, message, (12, 52), (0, 80, 255))
+        return preview
+
+    @staticmethod
     def get_foot_point(bbox):
         """Use the bottom-center of a box as a person's position on the floor."""
         x1, y1, x2, y2 = bbox
@@ -184,8 +203,8 @@ class TraceUtils:
         """Draw zone boundaries and optional occupant counts on a copy."""
         annotated = frame.copy()
         for zone in zones:
-            polygon = np.rint(TraceUtils.zone_contour(zone, frame.shape)).astype(np.int32)
-            color = TraceUtils.get_zone_color(zone["type"])
+            polygon = np.rint(Utils.zone_contour(zone, frame.shape)).astype(np.int32)
+            color = Utils.get_zone_color(zone["type"])
             cv2.polylines(annotated, [polygon], True, color, 2)
             x, y = polygon[0]
             x = max(0, min(int(x), frame.shape[1] - 1))
@@ -193,7 +212,7 @@ class TraceUtils:
             label = f"{zone['name']} ({zone['type']})"
             if counts is not None:
                 label += f": {counts[zone['id']]}"
-            TraceUtils.draw_text_label(annotated, label, (x, y), color)
+            Utils.draw_text_label(annotated, label, (x, y), color)
         return annotated
 
     @staticmethod
@@ -210,15 +229,15 @@ class TraceUtils:
             if "zone_names" in detection:
                 zone_label = ", ".join(detection["zone_names"]) or "Outside zones"
                 if detection["ignored"]:
-                    color = TraceUtils.get_zone_color("ignore")
+                    color = Utils.get_zone_color("ignore")
                     zone_label += " [ignored]"
                 elif "restricted" in detection["zone_types"]:
-                    color = TraceUtils.get_zone_color("restricted")
-                foot = tuple(round(value) for value in TraceUtils.get_foot_point(detection["bbox"]))
+                    color = Utils.get_zone_color("restricted")
+                foot = tuple(round(value) for value in Utils.get_foot_point(detection["bbox"]))
                 cv2.circle(annotated, foot, 5, color, -1)
-                TraceUtils.draw_text_label(annotated, zone_label, (x1, y1 + 18), color, scale=0.45)
+                Utils.draw_text_label(annotated, zone_label, (x1, y1 + 18), color, scale=0.45)
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-            TraceUtils.draw_text_label(annotated, label, (x1, y1 - 8), color)
+            Utils.draw_text_label(annotated, label, (x1, y1 - 8), color)
         return annotated
 
     @staticmethod
@@ -296,6 +315,67 @@ class TraceUtils:
                 # Adjacent edges share a corner and are allowed to meet there.
                 if second == first + 1 or (first == 0 and second == count - 1):
                     continue
-                if TraceUtils.segments_intersect(points[first], points[(first + 1) % count],
+                if Utils.segments_intersect(points[first], points[(first + 1) % count],
                                                 points[second], points[(second + 1) % count]):
                     raise ValueError("Polygon edges must not cross or touch other edges.")
+
+    # ---------- Zone membership ----------
+
+    @staticmethod
+    def get_zones(config):
+        """Load this camera's zones and reject invalid or duplicate polygons."""
+        zones = config.get("zones", [])
+        if not isinstance(zones, list):
+            raise ValueError("'zones' must be a list.")
+
+        used_ids = set()
+        for zone in zones:
+            if not isinstance(zone, dict):
+                raise ValueError("Each zone must be a JSON object.")
+            for field in ("id", "name", "type"):
+                if not isinstance(zone.get(field), str) or not zone[field].strip():
+                    raise ValueError(f"Zone '{field}' must be a non-empty string.")
+            if zone["id"] in used_ids:
+                raise ValueError(f"Duplicate zone ID: {zone['id']}")
+            used_ids.add(zone["id"])
+            if zone["type"] not in Utils.ZONE_TYPES:
+                raise ValueError(f"Zone type must be one of: {', '.join(Utils.ZONE_TYPES)}.")
+            Utils.validate_polygon(zone.get("points"))
+        return zones
+
+    @staticmethod
+    def assign_zones(tracks, zones, frame_shape):
+        """Return copies of tracks with their current zone memberships."""
+        polygons = [(zone, Utils.zone_contour(zone, frame_shape)) for zone in zones]
+        assigned_tracks = []
+
+        for track in tracks:
+            point = Utils.get_foot_point(track["bbox"])
+            matches = []
+            for zone, polygon in polygons:
+                # A point on an edge or vertex counts as inside.
+                if cv2.pointPolygonTest(polygon, point, False) >= 0:
+                    matches.append(zone)
+
+            ignored_zones = [zone for zone in matches if zone["type"] == "ignore"]
+            if ignored_zones:
+                matches = ignored_zones
+
+            assigned = dict(track)
+            assigned["zone_ids"] = [zone["id"] for zone in matches]
+            assigned["zone_names"] = [zone["name"] for zone in matches]
+            assigned["zone_types"] = [zone["type"] for zone in matches]
+            assigned["current_zone"] = matches[0]["id"] if matches else None
+            assigned["ignored"] = bool(ignored_zones)
+            assigned_tracks.append(assigned)
+
+        return assigned_tracks
+
+    @staticmethod
+    def count_zone_occupants(tracks, zones):
+        """Count current occupants; ignore zones override overlapping active zones."""
+        counts = {zone["id"]: 0 for zone in zones}
+        for track in tracks:
+            for zone_id in track["zone_ids"]:
+                counts[zone_id] += 1
+        return counts

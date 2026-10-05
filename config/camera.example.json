@@ -22,5 +22,8 @@
     "match_thresh": 0.8,
     "fuse_score": true
   },
-  "zones": []
+  "zones": [],
+  "alerts": {
+    "sound": true
+  }
 }

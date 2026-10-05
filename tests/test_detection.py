@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from vision.detector import Detector
-from vision.utils import TraceUtils
-from vision.worker import run_video
+from services.video_service import Detector
+from services.utils import Utils
+from services.video_service import run_video
 
 
 class DetectionTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class DetectionTests(unittest.TestCase):
         for settings in invalid:
             with self.subTest(settings=settings):
                 with self.assertRaises(ValueError):
-                    TraceUtils.get_detection_config({"detection": settings})
+                    Utils.get_detection_config({"detection": settings})
 
     # ---------- Preview and integration checks ----------
 
@@ -56,17 +56,17 @@ class DetectionTests(unittest.TestCase):
         frame = np.zeros((120, 160, 3), dtype=np.uint8)
         detections = [{"class": "person", "confidence": 0.9,
                        "bbox": [40, 40, 100, 100]}]
-        annotated = TraceUtils.draw_detections(frame, detections)
-        preview = TraceUtils.resize_frame(annotated, 320)
+        annotated = Utils.draw_detections(frame, detections)
+        preview = Utils.resize_frame(annotated, 320)
         self.assertFalse(frame.any())
         self.assertGreater(preview[140, 80, 1], 0)
 
     def test_worker_detects_before_resizing_and_releases_on_failure(self):
         """Pass original frames to detection and close on inference errors."""
-        config = TraceUtils.load_camera_config("config/camera.example.json")
+        config = Utils.load_camera_config("config/camera.example.json")
         frame = np.zeros((120, 160, 3), dtype=np.uint8)
-        with patch("vision.worker.Camera") as camera_class:
-            with patch("vision.worker.Detector") as detector_class:
+        with patch("services.video_service.Camera") as camera_class:
+            with patch("services.video_service.Detector") as detector_class:
                 camera = camera_class.return_value
                 camera.get_fps.return_value = 25
                 camera.read_frame.return_value = frame

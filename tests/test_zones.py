@@ -9,10 +9,9 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from vision.utils import TraceUtils
-from vision.zone_editor import ZoneEditor
-from vision.zones import ZoneManager
-from vision.worker import run_video
+from services.utils import Utils
+from services.zone_service import ZoneEditor
+from services.video_service import run_video
 
 
 class ZoneTests(unittest.TestCase):
@@ -34,29 +33,29 @@ class ZoneTests(unittest.TestCase):
 
     def test_inside_outside_and_boundary_use_feet(self):
         """Shoulder overlap alone does not put someone's feet in the zone."""
-        manager = ZoneManager({"zones": [self.zone()]})
+        zones = Utils.get_zones({"zones": [self.zone()]})
         people = [self.person([40, 0, 60, 50]), self.person([40, 30, 60, 90]),
                   self.person([15, 0, 35, 25])]
-        assigned = manager.assign_zones(people, (100, 100, 3))
+        assigned = Utils.assign_zones(people, zones, (100, 100, 3))
         self.assertEqual([person["current_zone"] for person in assigned],
                          ["restricted_01", None, "restricted_01"])
         self.assertNotIn("zone_ids", people[0])
-        self.assertEqual(manager.count_tracks(assigned), {"restricted_01": 2})
+        self.assertEqual(Utils.count_zone_occupants(assigned, zones), {"restricted_01": 2})
 
     def test_zone_scales_with_frame_resolution(self):
         """Changing image size preserves relative polygon membership."""
-        manager = ZoneManager({"zones": [self.zone()]})
+        zones = Utils.get_zones({"zones": [self.zone()]})
         for size in (100, 200, 800):
             track = self.person([size * 0.4, 0, size * 0.6, size * 0.5])
-            assigned = manager.assign_zones([track], (size, size, 3))
+            assigned = Utils.assign_zones([track], zones, (size, size, 3))
             self.assertEqual(assigned[0]["current_zone"], "restricted_01")
 
     def test_concave_polygon(self):
         """Accept an L-shaped zone without counting its missing corner."""
         points = [[0, 0], [1, 0], [1, 0.3], [0.3, 0.3], [0.3, 1], [0, 1]]
-        manager = ZoneManager({"zones": [self.zone(points=points)]})
-        assigned = manager.assign_zones([self.person([0, 0, 20, 80]),
-                                         self.person([60, 0, 80, 80])], (100, 100, 3))
+        zones = Utils.get_zones({"zones": [self.zone(points=points)]})
+        assigned = Utils.assign_zones([self.person([0, 0, 20, 80]),
+                                      self.person([60, 0, 80, 80])], zones, (100, 100, 3))
         self.assertIsNotNone(assigned[0]["current_zone"])
         self.assertIsNone(assigned[1]["current_zone"])
 
@@ -64,14 +63,14 @@ class ZoneTests(unittest.TestCase):
         """Preserve all active memberships until an ignore polygon overrides them."""
         zones = [self.zone(), self.zone("waiting", "loitering"), self.zone("crowd", "crowd")]
         person = self.person([40, 0, 60, 50])
-        manager = ZoneManager({"zones": zones})
-        assigned = manager.assign_zones([person], (100, 100, 3))
+        zones = Utils.get_zones({"zones": zones})
+        assigned = Utils.assign_zones([person], zones, (100, 100, 3))
         self.assertEqual(assigned[0]["zone_ids"], ["restricted_01", "waiting", "crowd"])
-        manager = ZoneManager({"zones": zones + [self.zone("ignored", "ignore")]})
-        assigned = manager.assign_zones([person], (100, 100, 3))
+        zones = Utils.get_zones({"zones": zones + [self.zone("ignored", "ignore")]})
+        assigned = Utils.assign_zones([person], zones, (100, 100, 3))
         self.assertTrue(assigned[0]["ignored"])
         self.assertEqual(assigned[0]["zone_ids"], ["ignored"])
-        self.assertEqual(manager.count_tracks(assigned),
+        self.assertEqual(Utils.count_zone_occupants(assigned, zones),
                          {"restricted_01": 0, "waiting": 0, "crowd": 0, "ignored": 1})
 
     def test_invalid_zones_are_rejected(self):
@@ -85,25 +84,25 @@ class ZoneTests(unittest.TestCase):
         for points in invalid:
             with self.subTest(points=points):
                 with self.assertRaises(ValueError):
-                    ZoneManager({"zones": [dict(self.zone(), points=points)]})
+                    Utils.get_zones({"zones": [dict(self.zone(), points=points)]})
         for zones in ({}, [self.zone(), self.zone()], [self.zone(zone_type="unknown")]):
             with self.assertRaises(ValueError):
-                ZoneManager({"zones": zones})
+                Utils.get_zones({"zones": zones})
 
     def test_draw_zones_preserves_original_frame(self):
         """A saved preview contains zone outlines without changing model input."""
         frame = np.zeros((200, 200, 3), dtype=np.uint8)
-        preview = TraceUtils.draw_zones(frame, [self.zone()])
+        preview = Utils.draw_zones(frame, [self.zone()])
         self.assertFalse(frame.any())
         self.assertTrue(preview[100, 50].any())
 
     def test_worker_includes_membership_in_drawn_tracks(self):
         """The monitoring pipeline sends enriched tracks to the shared renderer."""
-        config = TraceUtils.load_camera_config("config/camera.example.json")
+        config = Utils.load_camera_config("config/camera.example.json")
         config["zones"] = [self.zone()]
-        with patch("vision.worker.Camera") as camera_class, \
-                patch("vision.worker.Detector"), patch("vision.worker.Tracker") as tracker_class, \
-                patch("vision.worker.TraceUtils.draw_detections", side_effect=lambda frame, tracks: frame) as draw:
+        with patch("services.video_service.Camera") as camera_class, \
+                patch("services.video_service.Detector"), patch("services.video_service.Tracker") as tracker_class, \
+                patch("services.video_service.Utils.draw_detections", side_effect=lambda frame, tracks: frame) as draw:
             camera = camera_class.return_value
             camera.get_fps.return_value = 25
             camera.read_frame.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -180,7 +179,7 @@ class ZoneEditorTests(unittest.TestCase):
     def test_tall_frame_fits_with_room_for_controls(self):
         """A portrait source does not push the Save button below the screen."""
         frame = np.zeros((1920, 1080, 3), dtype=np.uint8)
-        preview = TraceUtils.fit_frame(frame, 960, 540)
+        preview = Utils.fit_frame(frame, 960, 540)
         self.assertLessEqual(preview.shape[0], 540)
         self.assertLessEqual(preview.shape[1], 960)
         self.assertAlmostEqual(preview.shape[1] / preview.shape[0], 1080 / 1920, places=2)
@@ -191,12 +190,12 @@ class ZoneEditorTests(unittest.TestCase):
         editor = ZoneEditor(self.path, "new")
         editor.preview = np.zeros((100, 200, 3), dtype=np.uint8)
         with patch.object(editor, "capture_preview"), \
-                patch("vision.zone_editor.cv2.namedWindow"), \
-                patch("vision.zone_editor.cv2.setMouseCallback"), \
-                patch("vision.zone_editor.cv2.imshow"), \
-                patch("vision.zone_editor.cv2.getWindowProperty", return_value=1), \
-                patch("vision.zone_editor.cv2.waitKey", side_effect=[13, 27]), \
-                patch("vision.zone_editor.cv2.destroyAllWindows") as close:
+                patch("services.zone_service.cv2.namedWindow"), \
+                patch("services.zone_service.cv2.setMouseCallback"), \
+                patch("services.zone_service.cv2.imshow"), \
+                patch("services.zone_service.cv2.getWindowProperty", return_value=1), \
+                patch("services.zone_service.cv2.waitKey", side_effect=[13, 27]), \
+                patch("services.zone_service.cv2.destroyAllWindows") as close:
             self.assertFalse(editor.run())
             close.assert_called_once()
         self.assertEqual(self.path.read_bytes(), before)

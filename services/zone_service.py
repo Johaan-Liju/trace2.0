@@ -7,9 +7,8 @@ from pathlib import Path
 
 import cv2
 
-from vision.camera import Camera
-from vision.utils import TraceUtils
-from vision.zones import ZoneManager
+from services.video_service import Camera
+from services.utils import Utils
 
 
 class ZoneEditor:
@@ -23,15 +22,15 @@ class ZoneEditor:
     def __init__(self, config_path, zone_id, name=None, zone_type=None):
         """Load an existing polygon or prepare a new one with this ID."""
         self.config_path = Path(config_path)
-        self.config = TraceUtils.load_camera_config(self.config_path)
-        manager = ZoneManager(self.config)
-        existing = next((zone for zone in manager.zones if zone["id"] == zone_id), {})
+        self.config = Utils.load_camera_config(self.config_path)
+        zones = Utils.get_zones(self.config)
+        existing = next((zone for zone in zones if zone["id"] == zone_id), {})
         self.zone = dict(existing)
         self.zone.update({"id": zone_id,
                           "name": name if name is not None else existing.get("name", "Restricted Area"),
                           "type": zone_type if zone_type is not None else existing.get("type", "restricted")})
         self.points = [list(point) for point in existing.get("points", [])]
-        self.other_zones = [zone for zone in manager.zones if zone["id"] != zone_id]
+        self.other_zones = [zone for zone in zones if zone["id"] != zone_id]
         self.preview = None
         self.message = self.HELP
         self.pending_action = None
@@ -45,7 +44,7 @@ class ZoneEditor:
             frame = camera.read_frame()
             if frame is None:
                 raise RuntimeError("No frame is available for zone editing.")
-            self.preview = TraceUtils.fit_frame(frame, min(self.config["display_width"], 960), 540)
+            self.preview = Utils.fit_frame(frame, min(self.config["display_width"], 960), 540)
         finally:
             camera.close()
 
@@ -88,11 +87,11 @@ class ZoneEditor:
 
     def draw_preview(self):
         """Show saved zones, the editable outline, and numbered corners."""
-        preview = TraceUtils.draw_zones(self.preview, self.other_zones)
+        preview = Utils.draw_zones(self.preview, self.other_zones)
         if self.points:
             draft = dict(self.zone, points=self.points)
-            preview = TraceUtils.draw_zones(preview, [draft])
-            for index, (x, y) in enumerate(TraceUtils.zone_contour(draft, preview.shape)):
+            preview = Utils.draw_zones(preview, [draft])
+            for index, (x, y) in enumerate(Utils.zone_contour(draft, preview.shape)):
                 point = (round(float(x)), round(float(y)))
                 cv2.circle(preview, point, 5, (255, 255, 255), -1)
                 cv2.putText(preview, str(index + 1), (point[0] + 8, point[1] + 18),
@@ -116,7 +115,7 @@ class ZoneEditor:
     def save_zone(self):
         """Validate and save just this zone, preserving the raw source settings."""
         zone = dict(self.zone, points=self.points)
-        ZoneManager({"zones": [zone]})
+        Utils.get_zones({"zones": [zone]})
 
         # Read the raw JSON again so a source override from the environment is
         # never accidentally written into the user's camera configuration.
@@ -129,8 +128,8 @@ class ZoneEditor:
         else:
             zones.append(zone)
         config["zones"] = zones
-        ZoneManager(config)
-        TraceUtils.save_json(self.config_path, config)
+        Utils.get_zones(config)
+        Utils.save_json(self.config_path, config)
 
     # ---------- Window loop ----------
 
