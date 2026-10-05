@@ -6,7 +6,6 @@ import logging
 import cv2
 
 from services.zone_service import ZoneEditor
-from services.utils import Utils
 
 
 # ---------- Command-line entry point ----------
@@ -17,7 +16,7 @@ def main():
     parser.add_argument("--config", default="config/camera.local.json")
     parser.add_argument("--zone-id", default="restricted_01", help="Reuse an ID to edit its polygon")
     parser.add_argument("--name", help="Zone label; existing names are kept when omitted")
-    parser.add_argument("--type", choices=Utils.ZONE_TYPES, dest="zone_type")
+    parser.add_argument("--type", choices=("restricted", "ignore"), dest="zone_type")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 

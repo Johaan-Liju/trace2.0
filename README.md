@@ -147,10 +147,10 @@ frame and places its buttons below the image.
 To add another zone, give it another ID. Reuse the ID to edit it:
 
 ```powershell
-.\.venv\Scripts\python.exe edit_zones.py --config config/camera.local.json --zone-id waiting_01 --name "Waiting Area" --type loitering
+.\.venv\Scripts\python.exe edit_zones.py --config config/camera.local.json --zone-id ignored_01 --name "Ignore Area" --type ignore
 ```
 
-Types are `restricted`, `loitering`, `crowd`, and `ignore`. Remove a zone's object
+Use `restricted` for alert areas and `ignore` for excluded areas. Remove a zone's object
 from the JSON to delete it. Restart monitoring after changing settings.
 
 Zone points are fractions from 0 to 1: `[0.5, 0.5]` means the image center. They
@@ -218,5 +218,9 @@ zone geometry, editor saving/canceling, and immediate entry alerts. Alert checks
 cover repeat suppression, exits/re-entry, missed detections, and ignore zones. They require no
 camera or model download. Sample inference and video checks exercise real YOLO.
 Your actual camera and desktop editor still need manual checks on your machine.
+
+The immediate-alert video check produced exactly two person-entry alerts across
+five frames, without repeats while they remained inside. Sound was muted for that
+automated run; confirm the system sound on your computer during the manual check.
 
 The focused project scope and code flow are in `docs/BUILD_GUIDE.md`.

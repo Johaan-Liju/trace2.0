@@ -1,4 +1,4 @@
-"""Run TRACE video input, detection, or tracking: python main.py --help."""
+"""Run TRACE restricted-area monitoring: python main.py --help."""
 
 import argparse
 import logging
@@ -13,7 +13,7 @@ from services.video_service import run_video
 
 def read_arguments():
     """Read the config path and optional preview / smoke-test settings."""
-    parser = argparse.ArgumentParser(description="TRACE: video input, detection, and tracking")
+    parser = argparse.ArgumentParser(description="TRACE: restricted-area entry alerts")
     parser.add_argument("--config", default="config/camera.example.json")
     parser.add_argument("--headless", action="store_true", help="Run without a preview window")
     parser.add_argument("--max-frames", type=int, help="Stop after this many frames")
