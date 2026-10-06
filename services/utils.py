@@ -5,6 +5,8 @@ import logging
 import math
 import os
 import tempfile
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -152,7 +154,61 @@ class Utils:
             return "rtsp"
         return "file"
 
-    # ---------- Frame helpers ----------
+    # ---------- Clip settings and encoding ----------
+
+    @staticmethod
+    def get_clip_config(config):
+        """Read optional clip settings and locate the installed FFmpeg program."""
+        settings = {"output_dir": "storage/clips", "duration_seconds": 5, "fps": 15,
+                    "reentry_gap_seconds": 2}
+        supplied = config.get("clips", {})
+        if not isinstance(supplied, dict):
+            raise ValueError("'clips' must be a JSON object.")
+        settings.update(supplied)
+        for field, maximum in (("duration_seconds", 60), ("fps", 60), ("reentry_gap_seconds", 60)):
+            value = settings[field]
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= maximum:
+                raise ValueError(f"Clips '{field}' must be greater than 0 and at most {maximum}.")
+        if not isinstance(settings["output_dir"], str) or not settings["output_dir"].strip():
+            raise ValueError("Clips 'output_dir' must be a non-empty folder path.")
+        settings["ffmpeg"] = shutil.which("ffmpeg")
+        if settings["ffmpeg"] is None:
+            raise RuntimeError("FFmpeg is missing. Install FFmpeg and add it to PATH before using --clips.")
+        return settings
+
+    @staticmethod
+    def encode_clip(folder, frames, end_time, output_path, settings):
+        """Encode timestamped JPEG frames as one silent MP4; return its path."""
+        # FFmpeg's concat input preserves timing even when live detection is slow.
+        lines = []
+        for index, (name, timestamp) in enumerate(frames):
+            next_time = frames[index + 1][1] if index + 1 < len(frames) else end_time
+            lines.extend([f"file '{name}'", f"duration {next_time - timestamp:.9f}"])
+        lines.append(f"file '{frames[-1][0]}'")
+        manifest = Path(folder) / "frames.txt"
+        manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        partial_path = output_path.with_suffix(".partial.mp4")
+        command = [
+            settings["ffmpeg"], "-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+            "-f", "concat", "-safe", "1", "-i", str(manifest),
+            "-t", str(end_time - frames[0][1]), "-an",
+            "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-r", str(settings["fps"]),
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(partial_path),
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=60,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if result.returncode != 0 or not partial_path.is_file() or partial_path.stat().st_size == 0:
+                raise RuntimeError("FFmpeg could not encode the entry clip. Check disk space and H.264 support.")
+            partial_path.rename(output_path)
+            return output_path
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("FFmpeg took too long to finish the entry clip.") from error
+        finally:
+            partial_path.unlink(missing_ok=True)
+
+    # ---------- Local notification ----------
 
     @staticmethod
     def play_alert_sound():
@@ -169,6 +225,40 @@ class Utils:
         preview = frame.copy()
         Utils.draw_text_label(preview, message, (12, 52), (0, 80, 255))
         return preview
+
+    # ---------- Frame display ----------
+
+    @staticmethod
+    def build_preview(frame, config, frame_number, alert_message=""):
+        """Resize a processed frame and add the camera label and latest alert."""
+        preview = Utils.resize_frame(frame, config["display_width"])
+        preview = Utils.add_preview_label(preview, config["camera_id"], frame_number)
+        if alert_message:
+            preview = Utils.draw_alert_banner(preview, alert_message)
+        return preview
+
+    @staticmethod
+    def show_preview(window_name, preview):
+        """Display a frame; return False when Q is pressed or the window closes."""
+        cv2.imshow(window_name, preview)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            return False
+        return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) >= 1
+
+    @staticmethod
+    def draw_frame_results(frame, detections, zones, detection_enabled):
+        """Draw zones first, then detected boxes; plain camera mode omits counts."""
+        annotated = frame
+        if zones:
+            counts = None
+            if detection_enabled:
+                counts = Utils.count_zone_occupants(detections, zones)
+            annotated = Utils.draw_zones(annotated, zones, counts)
+        if detection_enabled:
+            annotated = Utils.draw_detections(annotated, detections)
+        return annotated
+
+    # ---------- Zone and detection drawing ----------
 
     @staticmethod
     def get_foot_point(bbox):

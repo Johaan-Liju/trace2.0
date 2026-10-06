@@ -48,7 +48,7 @@ class ZoneEditor:
         finally:
             camera.close()
 
-    # ---------- Mouse input and rendering ----------
+    # ---------- Mouse input ----------
 
     def get_buttons(self):
         """Place clickable controls below the image, outside polygon coordinates."""
@@ -74,28 +74,46 @@ class ZoneEditor:
                 self.pending_action = action
                 return
 
+        self.add_corner(x, y)
+
+    def add_corner(self, x, y):
+        """Add an image click as a corner, or close the outline near its start."""
         height, width = self.preview.shape[:2]
-        if 0 <= x < width and 0 <= y < height:
-            if len(self.points) >= 3:
-                first_x, first_y = self.points[0]
-                if (x - first_x * width) ** 2 + (y - first_y * height) ** 2 <= 100:
-                    self.message = "Outline closed. Click Save or press S / Enter."
-                    return
-            self.points.append([x / width, y / height])
-            self.message = f"{len(self.points)} corners | {self.HELP}"
-            logging.info("Added corner %s.", len(self.points))
+        if not (0 <= x < width and 0 <= y < height):
+            return
+        if len(self.points) >= 3:
+            first_x, first_y = self.points[0]
+            distance_squared = (x - first_x * width) ** 2 + (y - first_y * height) ** 2
+            if distance_squared <= 100:  # Within 10 pixels of the first corner.
+                self.message = "Outline closed. Click Save or press S / Enter."
+                return
+        self.points.append([x / width, y / height])
+        self.message = f"{len(self.points)} corners | {self.HELP}"
+        logging.info("Added corner %s.", len(self.points))
+
+    # ---------- Editor rendering ----------
 
     def draw_preview(self):
-        """Show saved zones, the editable outline, and numbered corners."""
+        """Combine saved zones, editable corners, and the control panel."""
         preview = Utils.draw_zones(self.preview, self.other_zones)
-        if self.points:
-            draft = dict(self.zone, points=self.points)
-            preview = Utils.draw_zones(preview, [draft])
-            for index, (x, y) in enumerate(Utils.zone_contour(draft, preview.shape)):
-                point = (round(float(x)), round(float(y)))
-                cv2.circle(preview, point, 5, (255, 255, 255), -1)
-                cv2.putText(preview, str(index + 1), (point[0] + 8, point[1] + 18),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        preview = self.draw_corners(preview)
+        return self.draw_controls(preview)
+
+    def draw_corners(self, preview):
+        """Draw the polygon being edited and number its corners in click order."""
+        if not self.points:
+            return preview
+        draft = dict(self.zone, points=self.points)
+        preview = Utils.draw_zones(preview, [draft])
+        for index, (x, y) in enumerate(Utils.zone_contour(draft, preview.shape)):
+            point = (round(float(x)), round(float(y)))
+            cv2.circle(preview, point, 5, (255, 255, 255), -1)
+            cv2.putText(preview, str(index + 1), (point[0] + 8, point[1] + 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        return preview
+
+    def draw_controls(self, preview):
+        """Add the Save/Undo/Clear/Cancel buttons and the current help message."""
         # Put controls below the image so they do not hide polygon corners.
         height = preview.shape[0]
         preview = cv2.copyMakeBorder(preview, 0, 88, 0, 0, cv2.BORDER_CONSTANT, value=(25, 25, 25))

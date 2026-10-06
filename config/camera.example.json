@@ -23,6 +23,12 @@
     "fuse_score": true
   },
   "zones": [],
+  "clips": {
+    "output_dir": "storage/clips",
+    "duration_seconds": 5,
+    "fps": 15,
+    "reentry_gap_seconds": 2
+  },
   "alerts": {
     "sound": true
   }

@@ -21,6 +21,7 @@ def read_arguments():
     parser.add_argument("--detect", action="store_true", help="Enable YOLO person detection")
     parser.add_argument("--track", action="store_true", help="Enable YOLO and ByteTrack IDs")
     parser.add_argument("--alerts", action="store_true", help="Monitor restricted zones and alert immediately on entry")
+    parser.add_argument("--clips", action="store_true", help="Return an MP4 clip when a new person appears in the camera view")
     args = parser.parse_args()
     if args.max_frames is not None and args.max_frames < 1:
         parser.error("--max-frames must be at least 1")
@@ -37,7 +38,7 @@ def main():
     try:
         config = Utils.load_camera_config(args.config)
         frame_count = run_video(config, args.headless, args.max_frames, args.snapshot,
-                                detect=args.detect, track=args.track, alerts=args.alerts)
+                                detect=args.detect, track=args.track, alerts=args.alerts, clips=args.clips)
         logging.info("Finished. Frames read: %s", frame_count)
         return 0
     except KeyboardInterrupt:

@@ -15,12 +15,13 @@ services/
   video_service.py          Video loop, camera, YOLO, and ByteTrack
   zone_service.py           Mouse zone editor
   event_service.py          Immediate entry alerts
+  clip_service.py           Collect entry clips and return finished MP4 paths
   utils.py                  Shared settings, drawing, geometry, and zone checks
 config/
   camera.example.json       Example settings
   camera.local.json         Your settings (ignored by Git)
 tests/                      Automated checks
-docs/BUILD_GUIDE.md          Build order and future work
+docs/BUILD_GUIDE.md          Code walkthrough and current scope
 storage/                    Optional snapshots and local model settings
 clipcraft/                  Reference project
 ```
@@ -38,16 +39,17 @@ Read the code in this order:
 The frame-processing steps are direct function calls:
 
 ```python
-# In process_frame(), tracking mode follows this sequence:
-detections = detector.detect(frame, confidence=tracker.settings["track_low_thresh"])
-tracks = tracker.update(detections, frame.shape, timestamp)
-tracks = Utils.assign_zones(tracks, zones, frame.shape)
-counts = Utils.count_zone_occupants(tracks, zones)
-preview = Utils.draw_zones(frame, zones, counts)
-preview = Utils.draw_detections(preview, tracks)
+# In process_frame(), alert mode follows this sequence:
+detections = detect_and_track(frame, detector, tracker, timestamp)
+detections = Utils.assign_zones(detections, zones, frame.shape)
+entries = entry_alerts.check_entries(detections, tracker.get_remembered_ids())
+entry_alerts.notify(entries)
+preview = Utils.draw_frame_results(frame, detections, zones, detection_enabled=True)
 ```
 
 Functions have docstrings and related functions sit under labeled blocks.
+See the [function walkthrough](docs/BUILD_GUIDE.md#function-walkthrough) for what
+each step takes in, returns, and remembers.
 
 ## Setup
 
@@ -64,6 +66,51 @@ Keep your existing local config if you already completed setup. Set `source` to
 Use forward slashes in JSON file paths. Relative paths start at the working folder.
 
 ## Run the security camera
+
+### Browser dashboard
+
+Launch the local frontend from the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe dashboard.py
+```
+
+Open **http://127.0.0.1:8765**. The dashboard uses `config/camera.local.json` if it
+exists, otherwise the example config. No additional packages or frontend build
+step are needed. Choose a different config or port with `--config` and `--port`.
+
+- **Overview:** start/stop the camera, watch annotated frames, and see current
+  people, processing FPS, entry counts, and recent alerts.
+- **Zones:** choose **Camera preview**, start and stop the camera to capture a
+  frame, then draw a restricted or ignore polygon with at least three corners.
+  You can edit or remove saved zones here. Stop monitoring before making changes.
+- **Activity:** view the most recent 500 restricted-entry alerts. The alert total
+  includes all entries since the dashboard server started, across camera runs.
+- **Recordings:** download completed entry clips from this server session.
+  Enable **Record entry clips** in Settings; FFmpeg is required. Files remain on
+  disk in the configured output folder after the server exits.
+- **Settings:** save the source, camera name, new-person confidence, alert sound,
+  zone-alert toggle, and clip toggle. Confidence updates detection and ByteTrack's
+  high/new thresholds together; it must exceed the configured low threshold.
+
+**AI monitoring** runs the existing YOLO + ByteTrack pipeline. Restricted-entry
+alerts require a restricted zone and the alerts toggle. Clips respond to people
+appearing anywhere in view. **Camera preview** displays video without inference,
+alerts, or recording. A stopped/ended feed is explicitly labeled as the last frame.
+
+The server listens only on this computer's loopback interface. Keep it running
+while using the browser; Ctrl+C stops the server and releases the camera. Stop
+the command-line monitor or zone editor before using the same camera here.
+Model startup, camera retries, and finishing a clip may take time; Stop waits for
+in-flight operations to finish. Browser refreshes do not stop monitoring.
+
+Settings are saved to the selected JSON file; private `TRACE_CAMERA_SOURCE`
+overrides remain in the environment. RTSP source credentials are not returned to
+the browser. Alert history and the downloadable-clip list are held in memory for
+the server session, not persisted as an incident database. This is a single-camera
+local dashboard, not an authenticated remote hosting service.
+
+### Command-line monitor
 
 After saving a restricted zone, run:
 
@@ -173,6 +220,54 @@ inside. Overlapping zones are supported; ignore zones override active membership
 and their counts. Ignored people remain tracked, with gray boxes. A restricted-zone
 box indicates membership. Start with `--alerts` to enable entry notifications.
 
+## Return clips when someone appears
+
+```powershell
+.\.venv\Scripts\python.exe main.py --config config/camera.local.json --clips
+```
+
+`--clips` enables person detection and tracking automatically. A person appearing
+anywhere in view starts a five-second clip. No zone is needed. Someone already
+visible at startup also counts. The console prints `CLIP_READY: <absolute path>`
+after FFmpeg finishes a playable MP4 in `storage/clips`. Keep or move that file
+wherever you want; this feature does not upload it.
+
+Add this optional block to your camera JSON to change the defaults:
+
+```json
+"clips": {
+  "output_dir": "storage/clips",
+  "duration_seconds": 5,
+  "fps": 15,
+  "reentry_gap_seconds": 2
+}
+```
+
+- No detected person means no clip. Remaining visible does not start repeated clips.
+- A return after at least two seconds without a detection counts as another entry,
+  even if tracking keeps the same ID. Shorter gaps are treated as missed detections.
+- People arriving during an active clip share that clip; its end time stays fixed.
+- Stopping, file EOF, or reconnection finishes a shorter clip with frames collected so far.
+- Clips contain camera images from the first detection onward, without audio or
+  preview labels. There is no footage from before the entry. Ignore zones apply to
+  restricted-area alerts; they do not suppress these whole-frame clips.
+- Clip FPS controls sampling/output rate. Live timing uses elapsed seconds; files
+  use their source timeline. Slow detection means fewer distinct frames, so the
+  encoder holds the available images to preserve elapsed time. Missed people cannot
+  trigger clips, and tracking ID changes or longer detection gaps can trigger extras.
+- FFmpeg must be on `PATH` (`ffmpeg -version` checks it). It is already available on
+  the current machine. Encoding briefly pauses processing when a clip finishes.
+
+The small `ClipRecorder` class keeps entry history and temporary frames.
+`update()` returns a finished `Path` or `None`; `close()` returns the last shorter
+clip when stopping. Both print completed paths. `Utils.encode_clip()` handles the
+FFmpeg command and deletes unfinished output on failure. Temporary JPEGs are
+cleaned after encoding. Completed MP4s remain until you move or delete them.
+
+You can combine `--clips --alerts` to keep restricted-zone sound/banner alerts
+alongside whole-frame entry clips. Encoding uses FFmpeg's
+[concat timing and MP4 output options](https://ffmpeg.org/ffmpeg-formats.html).
+
 ## Settings and limits
 
 The example JSON shows all defaults. `Utils` validates settings before use.
@@ -213,10 +308,15 @@ check logs before sharing them. Editor saves preserve the raw configured source.
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The 47 checks cover playback, cleanup, configuration, actual ByteTrack matching,
+The 63 checks cover playback, cleanup, configuration, actual ByteTrack matching,
 zone geometry, editor saving/canceling, and immediate entry alerts. Alert checks
 cover repeat suppression, exits/re-entry, missed detections, and ignore zones. They require no
 camera or model download. Sample inference and video checks exercise real YOLO.
+Clip checks cover empty views, continuous presence, re-entry, shared clips,
+reconnection, failure cleanup, and a real playable MP4 with elapsed-time checks.
+The real encoder test is skipped if FFmpeg is unavailable.
+Dashboard checks exercise actual HTTP requests, source privacy, polygon validation,
+start/stop cleanup, duplicate-start prevention, previews, and clip downloads.
 Your actual camera and desktop editor still need manual checks on your machine.
 
 The immediate-alert video check produced exactly two person-entry alerts across

@@ -15,19 +15,23 @@ import numpy as np
 
 from services.utils import Utils
 from services.event_service import EntryAlerts
+from services.clip_service import ClipRecorder
 
 
 # ==================== 1. RUN THE VIDEO ====================
 
-def run_video(config, headless=False, max_frames=None, snapshot_path=None, detect=False, track=False, alerts=False):
+def run_video(config, headless=False, max_frames=None, snapshot_path=None, detect=False, track=False, alerts=False, clips=False):
     """Read video until EOF, Q, Ctrl+C, or the requested frame limit."""
     camera = Camera(config)
     frame_number = 0
+    clip_recorder = None
 
     try:
+        # 1. Prepare the camera and the requested features.
         zones = Utils.get_zones(config)
         entry_alerts = EntryAlerts(config, zones) if alerts else None
-        track = track or alerts
+        clip_recorder = ClipRecorder(config) if clips else None
+        track = track or alerts or clips
         detector = Detector(config) if detect or track else None
         if not camera.open():
             raise ConnectionError("Cannot open camera. Check the source and connection.")
@@ -41,6 +45,7 @@ def run_video(config, headless=False, max_frames=None, snapshot_path=None, detec
         connection_id = camera.connection_id
         logging.info("Camera online. Press Q in the preview or Ctrl+C to stop.")
 
+        # 2. Read, process, and show one frame at a time.
         while True:
             frame_started = time.monotonic()
             frame = camera.read_frame()
@@ -56,6 +61,8 @@ def run_video(config, headless=False, max_frames=None, snapshot_path=None, detec
                 tracker.reset()
                 if entry_alerts is not None:
                     entry_alerts.reset()
+                if clip_recorder is not None:
+                    clip_recorder.reset()
                 connection_id = camera.connection_id
                 logging.info("Camera reconnected. Starting fresh tracking IDs.")
 
@@ -63,24 +70,16 @@ def run_video(config, headless=False, max_frames=None, snapshot_path=None, detec
             timestamp = time.monotonic()
             if camera.source_type == "file":
                 timestamp = (frame_number - 1) * frame_interval
-            annotated = process_frame(frame, detector, tracker, zones, timestamp, entry_alerts)
+            annotated = process_frame(frame, detector, tracker, zones, timestamp, entry_alerts, clip_recorder)
 
-            preview = Utils.resize_frame(annotated, config["display_width"])
-            preview = Utils.add_preview_label(
-                preview, config["camera_id"], frame_number
-            )
-            if entry_alerts is not None and entry_alerts.last_message:
-                preview = Utils.draw_alert_banner(preview, entry_alerts.last_message)
+            alert_message = entry_alerts.last_message if entry_alerts is not None else ""
+            preview = Utils.build_preview(annotated, config, frame_number, alert_message)
 
             if snapshot_path and frame_number == 1:
                 Utils.save_snapshot(preview, snapshot_path)
 
-            if not headless:
-                cv2.imshow("TRACE - Camera Preview", preview)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-                if cv2.getWindowProperty("TRACE - Camera Preview", cv2.WND_PROP_VISIBLE) < 1:
-                    break
+            if not headless and not Utils.show_preview("TRACE - Camera Preview", preview):
+                break
 
             if max_frames is not None and frame_number >= max_frames:
                 break
@@ -94,34 +93,47 @@ def run_video(config, headless=False, max_frames=None, snapshot_path=None, detec
         return frame_number
 
     finally:
+        # 3. Always release resources, including after an error.
         camera.close()
         if not headless:
             cv2.destroyAllWindows()
         logging.info("Camera released.")
+        if clip_recorder is not None:
+            clip_recorder.close()
 
 
 # ==================== 2. PROCESS ONE FRAME ====================
 
-def process_frame(frame, detector, tracker, zones, timestamp, entry_alerts=None):
-    """Detect people, attach IDs and zones, then draw the result."""
-    objects = []
+def process_frame(frame, detector, tracker, zones, timestamp, entry_alerts=None, clip_recorder=None):
+    """Find people, check their zones, send entry alerts, and draw the result."""
+    # 1. Detect people and attach tracking IDs when enabled.
+    detections = detect_and_track(frame, detector, tracker, timestamp)
+
+    # 2. Check each box's foot point against the saved polygons.
+    if zones:
+        detections = Utils.assign_zones(detections, zones, frame.shape)
+
+    # 3. Alert only for a new entry, remembering brief tracking gaps.
+    if entry_alerts is not None:
+        entries = entry_alerts.check_entries(detections, tracker.get_remembered_ids())
+        entry_alerts.notify(entries)
+
+    # Optional clips use people appearing anywhere in the frame, regardless of zones.
+    if clip_recorder is not None:
+        clip_recorder.update(frame, detections, tracker.get_remembered_ids(), timestamp)
+
+    # 4. Draw zones and boxes after all decisions use the original coordinates.
+    return Utils.draw_frame_results(frame, detections, zones, detector is not None)
+
+
+def detect_and_track(frame, detector, tracker, timestamp):
+    """Return detection dictionaries, adding IDs if tracking is enabled."""
+    if detector is None:
+        return []
     if tracker is not None:
         detections = detector.detect(frame, confidence=tracker.settings["track_low_thresh"])
-        objects = tracker.update(detections, frame.shape, timestamp)
-    elif detector is not None:
-        objects = detector.detect(frame)
-
-    annotated = frame
-    if zones:
-        objects = Utils.assign_zones(objects, zones, frame.shape)
-        counts = Utils.count_zone_occupants(objects, zones) if detector is not None else None
-        annotated = Utils.draw_zones(frame, zones, counts)
-    if entry_alerts is not None:
-        entries = entry_alerts.check_entries(objects, tracker.get_remembered_ids())
-        entry_alerts.notify(entries)
-    if detector is not None:
-        annotated = Utils.draw_detections(annotated, objects)
-    return annotated
+        return tracker.update(detections, frame.shape, timestamp)
+    return detector.detect(frame)
 
 
 # ==================== 3. CAMERA INPUT ====================
