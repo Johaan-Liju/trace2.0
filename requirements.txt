@@ -1,3 +1,5 @@
+# Compatible with both the camera dashboard and the existing training tools.
+# For the exact environment used for verification, use requirements-tested.txt.
+opencv-python>=4.10,<6
 ultralytics==8.3.227
 lap==0.5.12
-

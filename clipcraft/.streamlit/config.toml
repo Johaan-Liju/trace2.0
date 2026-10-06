@@ -1,0 +1,7 @@
+[theme]
+primaryColor = "#YOUR_BRAND_COLOR"
+backgroundColor = "#0E1117"  # Use a deep navy or custom dark grey
+secondaryBackgroundColor = "#161B22"
+textColor = "#FAFBFC"
+font = "sans serif"
+baseRadius = "0.5rem"  # Rounder corners feel more "modern SaaS"

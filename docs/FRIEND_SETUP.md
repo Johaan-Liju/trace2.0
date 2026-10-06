@@ -1,6 +1,6 @@
 # Run the trained model after cloning
 
-Cloning gets the source code. The repository deliberately excludes `.venv/`, `models/`, `runs/`, and training videos. The message in the screenshot means `runs/violence_baseline/best.pt` is missing. It is not evidence that training failed on the original laptop.
+Cloning gets the committed files, but never the local Python environment or training videos. This local Git history includes the two trained weight files; another clone only receives them if its remote branch contains that commit. The message in the screenshot means `runs/violence_baseline/best.pt` is missing. It is not evidence that training failed on the original laptop.
 
 To use the already-trained model, you need two weight files and a local Python environment. You do not need the training dataset or another training run.
 
@@ -13,7 +13,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-tested.txt
 ```
 
-Obtain `trace-violence-model.zip` from the person who trained the model. Extract its contents directly into the cloned repository root, alongside `README.md`. For example, if it is in Downloads:
+Check for both weight files at the paths below. If either is missing, obtain `trace-violence-model.zip` from the person who trained the model. Extract its contents directly into the cloned repository root, alongside `README.md`. For example, if it is in Downloads:
 
 ```powershell
 Expand-Archive -LiteralPath "$env:USERPROFILE\Downloads\trace-violence-model.zip" -DestinationPath .
@@ -46,4 +46,4 @@ CPU is the default. An NVIDIA GPU is not required for this command. The classifi
 
 This creates `dist/trace-violence-model.zip`, verifies the two archived files against SHA-256 hashes, and adds a manifest. It contains no training videos, predictions, or Python environment. Send the ZIP separately to your collaborator. No upload or message is performed by this script. To package again, choose a fresh output filename with `--output`.
 
-The source-code changes in this setup guide and launcher must also be committed and pushed before they appear in another clone. Model files remain separate from ordinary Git history.
+Local commits must be pushed before another clone can receive them. The model ZIP can also supply the weights independently of which branch your collaborator has cloned.

@@ -1,0 +1,35 @@
+{
+  "camera_id": "camera_01",
+  "name": "Demo Camera",
+  "source": "storage/demo.avi",
+  "display_width": 960,
+  "fallback_fps": 25,
+  "reconnect_attempts": 3,
+  "reconnect_delay_seconds": 2,
+  "timeout_ms": 5000,
+  "detection": {
+    "model": "yolov8n.pt",
+    "confidence": 0.4,
+    "image_size": 640,
+    "device": "cpu",
+    "classes": [0]
+  },
+  "tracking": {
+    "track_high_thresh": 0.4,
+    "track_low_thresh": 0.1,
+    "new_track_thresh": 0.4,
+    "track_buffer_seconds": 5,
+    "match_thresh": 0.8,
+    "fuse_score": true
+  },
+  "zones": [],
+  "clips": {
+    "output_dir": "storage/clips",
+    "duration_seconds": 5,
+    "fps": 15,
+    "reentry_gap_seconds": 2
+  },
+  "alerts": {
+    "sound": true
+  }
+}

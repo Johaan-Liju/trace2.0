@@ -1,62 +1,67 @@
-# TRACE prototype
+# TRACE
 
-This is a small working prototype for the CCTV concept in `hih.pptx`. It detects people with a pretrained YOLO model, tracks them with ByteTrack, and raises one event when a tracked person remains inside a user-selected restricted zone for the configured dwell time. Each event gets a snapshot, JSONL record, and SQLite row. It deliberately does not identify faces or infer intent.
+This project combines the camera dashboard from `Johaan-Liju/trace2.0` with the existing restricted-zone prototype and trained violence-video classifier.
 
-## Run it
+## Setup
 
-For the supplied violence-video dataset, the trained model is ready: double-click `run_violence.cmd` to classify a short clip. See the [measured results](docs/VIOLENCE_RESULTS.md) and [violence training guide](docs/VIOLENCE_TRAINING.md). That pipeline trains a binary video classifier; the commands below run the person-and-zone prototype.
-
-**Cloned this repository on another computer?** Follow [the clone setup guide](docs/FRIEND_SETUP.md). Git does not include the trained weights or Python environment; obtain the model ZIP and install dependencies before using the launcher.
-
-From PowerShell in this folder:
+From PowerShell in the repository root, install Python 3.12 and run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m trace.monitor --source "C:\path\to\video.mp4" --select-zone --save-video
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-tested.txt
+if (!(Test-Path config/camera.local.json)) {
+    Copy-Item config/camera.example.json config/camera.local.json
+}
 ```
 
-Click three or more zone corners, press Enter, and press Q to stop. The run is written under `outputs/`. The saved `zone.local.json` can be reused with `--zone zone.local.json` for another video from the same camera framing. For a webcam, use `--source 0`; for an RTSP camera, pass its URL and omit `--select-zone` after saving a zone from a representative frame.
+Keep an existing virtual environment if it already works. `requirements-tested.txt` records the environment verified with both pipelines; `requirements.txt` contains the minimal direct dependencies. FFmpeg must be on `PATH` to record entry clips. The root dashboard requires no Node.js or frontend build.
 
-The default is CPU inference. This environment has an RTX 4060, but the installed PyTorch wheel is CPU-only, so use `--device 0` only after installing a CUDA-enabled PyTorch build. Reducing `--imgsz` to 320 improves CPU speed; do not treat that as an accuracy result.
-
-## Data and training
-
-The first useful training set is footage from the actual cameras. Sample frames with:
+## Camera dashboard
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\extract_frames.py --video "C:\path\to\video.mp4" --output data\camera1_monday --every-seconds 2
+.\.venv\Scripts\python.exe dashboard.py
 ```
 
-Annotate every visible person with a person bounding box using CVAT, Label Studio, or Roboflow, export YOLO format, and make empty label files for reviewed frames with no people. Keep frames from one recording session in one split. Fill `examples/manifest.example.csv` with paths relative to the manifest, then validate and copy the dataset:
+Open **http://127.0.0.1:8765**. In Settings, set the source to `0` for a webcam or a video file path; the example's `storage/demo.avi` is a placeholder. Use Camera preview to capture a frame, stop the camera, then draw a restricted zone in Zones. Start AI monitoring to detect people, track temporary IDs, and alert immediately on entry. Recordings can save clips when people appear.
+
+See the [camera dashboard guide](docs/CAMERA_DASHBOARD.md) for settings, the zone editor, CLI modes, clip recording, and limits. The dashboard's alerts concern restricted-area entry; it does not yet run the violence classifier automatically.
+
+## Trained violence classifier
+
+Double-click `run_violence.cmd`, or run:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\prepare_dataset.py --manifest data\manifest.csv --output data\person_dataset
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\short-video.mp4"
 ```
 
-The manifest validator rejects missing labels, invalid normalized boxes, duplicate frames, and leakage where one recording group crosses train/validation/test. Train a small baseline on CPU:
+This CPU-capable model scores a complete video as possible violence or no violence flag. It does not identify stalking or locate the exact event time. It needs both `models/r3d_18-b3b3357e.pth` and `runs/violence_baseline/best.pt`. These files are present in this local Git history; if they are absent in another checkout, use the model ZIP described in the [clone setup guide](docs/FRIEND_SETUP.md).
+
+- [Training, including another dataset](docs/VIOLENCE_TRAINING.md)
+- [Measured results and evaluation limits](docs/VIOLENCE_RESULTS.md)
+- [Dataset options](docs/DATASETS.md)
+
+## Existing zone prototype and person training
+
+`run.cmd` and `python -m trace.monitor` retain the original dwell-based zone monitor, snapshots, JSONL records, and SQLite events. Its `zone.local.json` format is separate from the dashboard's `config/camera.local.json`; configure zones for the interface you use. Close one monitor before using the same camera in another.
+
+The [original prototype guide](docs/PROTOTYPE_GUIDE.md) covers frame extraction, person annotation, dataset validation, and YOLO training. The [training guide](docs/TRAINING.md) adds evaluation guidance.
+
+## Project layout
+
+| Path | Purpose |
+| --- | --- |
+| `dashboard.py`, `frontend/`, `services/` | Browser dashboard and camera services |
+| `main.py`, `edit_zones.py`, `config/` | Camera CLI and zone editor |
+| `trace/` | Existing monitor, video classifier, and training |
+| `scripts/` | Dataset preparation and model packaging |
+| `tests/` | Checks for both TRACE pipelines |
+| `clipcraft/` | Separate reference application imported with the source repository; optional and not used by TRACE |
+
+## Verify
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\train.py --data data\person_dataset\dataset.yaml --device cpu --epochs 30 --batch 2
-```
-
-Before committing to a long run, verify the pipeline only:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\train.py --data data\person_dataset\dataset.yaml --smoke
-```
-
-The `data/coco8.zip` file is only a tiny plumbing sample. COCO is useful for a generic pretrained person detector, CrowdHuman is useful for dense crowds, and MOT17 is useful for validating tracking. Neither COCO nor CrowdHuman teaches “restricted area entry”; the event rule is defined by geometry and time. A later anomaly model can use UCF-Crime, but its video-level anomaly labels do not directly supervise this zone event.
-
-## Suggested data plan
-
-Start with 2–4 hours per camera covering daylight, night, empty scenes, normal movement near the boundary, partial occlusion, and the real restricted-area entries. Sample every 1–2 seconds, annotate roughly 1,000–3,000 diverse frames, and keep entire sessions together when splitting. After the baseline, review false alerts and add those exact scenes to a held-out test set. Measure person detection precision/recall and event precision, recall, alert delay, and false alerts per camera-hour.
-
-## Safety and privacy boundaries
-
-The prototype stores event snapshots locally, keeps camera credentials out of `settings.json`, and has no face recognition or identity tracking. Add retention limits, access control, human review, and a documented deletion process before connecting it to real CCTV. Check the license of every dataset and model before commercial deployment. Ultralytics YOLO is AGPL-3.0 by default, with separate licensing options for some commercial uses.
-
-## Tests
-
-```powershell
+$env:YOLO_CONFIG_DIR = Join-Path (Get-Location) '.runtime\ultralytics'
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
+The combined suite includes 76 tests covering tracking, zones, alerts, HTTP dashboard requests, video decoding, clip encoding, dataset import, and classifier utilities. Real clip encoding requires FFmpeg. Live camera behavior and alert sound still need checks on the target laptop.
