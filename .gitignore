@@ -10,4 +10,6 @@ outputs/
 *.mp4
 *.avi
 zone.local.json
+dist/
+violence-model-manifest.json
 

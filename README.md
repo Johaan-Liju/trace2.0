@@ -6,6 +6,8 @@ This is a small working prototype for the CCTV concept in `hih.pptx`. It detects
 
 For the supplied violence-video dataset, the trained model is ready: double-click `run_violence.cmd` to classify a short clip. See the [measured results](docs/VIOLENCE_RESULTS.md) and [violence training guide](docs/VIOLENCE_TRAINING.md). That pipeline trains a binary video classifier; the commands below run the person-and-zone prototype.
 
+**Cloned this repository on another computer?** Follow [the clone setup guide](docs/FRIEND_SETUP.md). Git does not include the trained weights or Python environment; obtain the model ZIP and install dependencies before using the launcher.
+
 From PowerShell in this folder:
 
 ```powershell

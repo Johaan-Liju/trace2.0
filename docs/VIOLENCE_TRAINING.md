@@ -60,6 +60,26 @@ This is an offline video classification baseline. It is not yet integrated into 
 
 ## Reproduce on another computer
 
+To run the existing trained model after cloning, follow [FRIEND_SETUP.md](FRIEND_SETUP.md). A clone alone does not include trained model files or the virtual environment.
+
 Use Python 3.12, install `requirements-tested.txt`, and obtain the official R3D-18 weights from https://download.pytorch.org/models/r3d_18-b3b3357e.pth into `models/`. CPU is supported. A CUDA-enabled PyTorch installation is needed for `--device cuda:0`; this laptop's current PyTorch installation is CPU-only.
 
 References: [PyTorch R3D-18](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.video.r3d_18.html), [RLVS publisher's dataset page](https://www.kaggle.com/datasets/mohamedmustafa/real-life-violence-situations-dataset). The archive layout matches RLVS, but the archive alone does not establish its provenance or reuse terms.
+
+## Train with another dataset
+
+The current task has two labels: `0 = non_violence` and `1 = violence`. A dataset for the same task can train a new classifier using the same frozen encoder. A dataset labeled stalking, falling, or individual action names needs a new label definition and changes to the classifier, evaluation, and prediction output.
+
+The current trainer always initializes a fresh classifier. It does not resume or fine-tune `best.pt`. To learn from both the original and new datasets, create a combined manifest and retrain, retaining a consistent independent test set. Do not put any existing test videos into training. Review duplicates across both datasets and keep clips from the same original recording together.
+
+If a new ZIP uses the same immediate class-folder names, `Violence` and `NonViolence`, and contains MP4/AVI clips without a prescribed split, the existing importer can prepare it:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\prepare_violence.py --archive "C:\path\to\new-dataset.zip" --output data\violence_new
+.\.venv\Scripts\python.exe -m trace.train_violence --manifest data\violence_new\manifest.csv --output runs\violence_new --device cpu
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\clip.mp4" --checkpoint runs\violence_new\best.pt
+```
+
+The original baseline is preserved. The launcher still uses the original baseline; use the explicit `--checkpoint` option above to try the new model.
+
+For different layouts, labels, or official splits, write a dataset-specific importer instead of running the RLVS importer unchanged. The trainer accepts a CSV with `path,label,split,sha256,group` columns. Paths are relative to the manifest, `split` is `train`, `val`, or `test`, `sha256` is the video content hash, and `group` identifies the original recording. Include both classes in each split. Preserve official test partitions where supplied. UCF-Crime's long videos and video-level labels need a sampling/labeling strategy appropriate to weak supervision; merely renaming its folders is not sufficient.
