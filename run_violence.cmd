@@ -21,7 +21,9 @@ if not exist "models\r3d_18-b3b3357e.pth" (
   pause
   exit /b 1
 )
-set /p "TRACE_CLIP=Enter the path to a short video clip: "
+echo Scanning overlapping windows throughout the video. CPU processing may take time.
+echo Flagged timestamps are candidates for review; scan accuracy is not yet validated.
+set /p "TRACE_CLIP=Enter the path to a video clip: "
 set "TRACE_CLIP=%TRACE_CLIP:"=%"
-".venv\Scripts\python.exe" -m trace.predict_violence --source "%TRACE_CLIP%"
+".venv\Scripts\python.exe" -m trace.predict_violence --source "%TRACE_CLIP%" --scan
 pause

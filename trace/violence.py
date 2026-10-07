@@ -75,14 +75,65 @@ def sample_video(path, clips=3):
                     raise ValueError(f'Decode failed at sampled frame {index}: {path}')
                 decoded[index] = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (171, 128))
         frames = np.stack([[decoded[int(i)] for i in window] for window in indices])
-        tensor = torch.from_numpy(frames).permute(0, 4, 1, 2, 3).float().div_(255)
-        # Torchvision center crop uses round((size-crop)/2).
-        tensor = tensor[:, :, :, 8:120, 30:142]
-        mean = torch.tensor([.43216, .394666, .37645]).view(1, 3, 1, 1, 1)
-        std = torch.tensor([.22803, .22145, .216989]).view(1, 3, 1, 1, 1)
-        tensor = (tensor - mean) / std
-        return tensor.contiguous(), {'duration_seconds': count / fps,
+        return prepare_video_frames(frames), {'duration_seconds': count / fps,
                 'sampled_windows': [{'start_seconds': float(a[0] / fps), 'end_seconds': float((a[-1] + 1) / fps)} for a in indices]}
+    finally:
+        cap.release()
+
+
+def prepare_video_frames(frames):
+    """Apply the checkpoint's original RGB crop and normalization to a batch."""
+    tensor = torch.from_numpy(frames).permute(0, 4, 1, 2, 3).float().div_(255)
+    # Keep this identical to training; spatial changes need separate evaluation.
+    tensor = tensor[:, :, :, 8:120, 30:142]
+    mean = torch.tensor([.43216, .394666, .37645]).view(1, 3, 1, 1, 1)
+    std = torch.tensor([.22803, .22145, .216989]).view(1, 3, 1, 1, 1)
+    return ((tensor - mean) / std).contiguous()
+
+
+def iter_video_windows(path, stride_seconds=0.5, batch_size=3):
+    """Scan the timeline with overlapping 16-frame windows and bounded memory.
+
+    Decode sequentially once, retaining only sampled images needed by this or
+    the next batch. The final window reaches the last frame. Consumers that stop
+    early should close this generator to release its camera handle immediately.
+    """
+    if not math.isfinite(stride_seconds) or not 0 < stride_seconds <= 1:
+        raise ValueError('Scan stride must be greater than 0 and at most 1 second.')
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError('Scan batch size must be a positive integer.')
+    cap = cv2.VideoCapture(str(path))
+    try:
+        raw_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        fps = float(cap.get(cv2.CAP_PROP_FPS))
+        if not cap.isOpened() or not math.isfinite(raw_count) or raw_count < 2 or not math.isfinite(fps) or fps <= 0:
+            raise ValueError(f'Unreadable video metadata: {path}')
+        count = int(raw_count)
+        last_start = max(0, count - 1 - fps)
+        hop = max(1.0, stride_seconds * fps)
+        windows = math.ceil(last_start / hop) + 1
+        next_frame, decoded = 0, {}
+        for offset in range(0, windows, batch_size):
+            starts = np.asarray([min(i * hop, last_start)
+                                 for i in range(offset, min(offset + batch_size, windows))])
+            indices = np.rint(starts[:, None] + np.arange(16)[None, :] * fps / 15).astype(int)
+            indices = np.clip(indices, 0, count - 1)
+            first, last = int(indices.min()), int(indices.max())
+            decoded = {index: frame for index, frame in decoded.items() if index >= first}
+            # Retain every decoded image in this short interval: later overlapping
+            # windows may sample frames that this batch did not sample.
+            while next_frame <= last:
+                ok, frame = cap.read()
+                if not ok:
+                    raise ValueError(f'Decode failed at frame {next_frame}: {path}')
+                if next_frame >= first:
+                    decoded[next_frame] = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (171, 128))
+                next_frame += 1
+            frames = np.stack([[decoded[int(index)] for index in window] for window in indices])
+            metadata = {'duration_seconds': count / fps, 'total_windows': windows,
+                        'sampled_windows': [{'start_seconds': float(a[0] / fps),
+                                             'end_seconds': float((a[-1] + 1) / fps)} for a in indices]}
+            yield prepare_video_frames(frames), metadata
     finally:
         cap.release()
 

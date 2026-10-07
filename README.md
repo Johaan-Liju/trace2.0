@@ -31,10 +31,17 @@ See the [camera dashboard guide](docs/CAMERA_DASHBOARD.md) for settings, the zon
 Double-click `run_violence.cmd`, or run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\short-video.mp4"
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\short-video.mp4" --scan
 ```
 
 This CPU-capable model scores a complete video as possible violence or no violence flag. It does not identify stalking or locate the exact event time. It needs both `models/r3d_18-b3b3357e.pth` and `runs/violence_baseline/best.pt`. These files are present in this local Git history; if they are absent in another checkout, use the model ZIP described in the [clone setup guide](docs/FRIEND_SETUP.md).
+
+The launcher now scans overlapping windows throughout the video and reports
+candidate review timestamps. This addresses gaps between the original three
+samples. Scan scores and thresholds are experimental and can produce more false
+alarms; the existing dataset accuracy does not apply to this mode. Omit `--scan`
+to compare with the original whole-video prediction. See the
+[scan guide](docs/VIOLENCE_TRAINING.md#investigate-missed-events-with-a-window-scan).
 
 - [Training, including another dataset](docs/VIOLENCE_TRAINING.md)
 - [Measured results and evaluation limits](docs/VIOLENCE_RESULTS.md)

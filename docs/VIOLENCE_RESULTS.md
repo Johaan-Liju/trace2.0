@@ -36,7 +36,13 @@ The first feature extraction took approximately 22 minutes on the CPU. Once feat
 
 ## Try it
 
-Double-click `run_violence.cmd` and enter a short video's path, or run this from the project folder:
+The results above describe the original three-sample whole-video baseline.
+`run_violence.cmd` now runs an experimental overlapping-window scan to reduce
+temporal sampling gaps. That mode has separate, currently unmeasured accuracy;
+see the [scan guide](VIOLENCE_TRAINING.md#investigate-missed-events-with-a-window-scan).
+The command below retains the original baseline for comparison.
+
+Run this from the project folder for the original baseline:
 
 ```powershell
 .\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\clip.mp4"

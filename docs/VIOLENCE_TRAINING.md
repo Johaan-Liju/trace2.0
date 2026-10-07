@@ -58,6 +58,54 @@ Training outputs:
 
 This is an offline video classification baseline. It is not yet integrated into the YOLO monitoring window. It has no validated event timestamps, live-stream speed, or false-alerts-per-hour measurement. Scores are not calibrated probabilities. Before continuous alerting, evaluate rolling windows on separately annotated, continuous videos and choose alert persistence on validation footage.
 
+## Investigate missed events with a window scan
+
+`run_violence.cmd` now enables experimental **window scan** mode. The original
+baseline only samples three roughly one-second windows, then averages their
+features into one video score. A brief event between those windows is never
+examined, and an event in one sampled window can be diluted by normal footage.
+
+Scan mode checks 16-frame windows at 15 FPS, stepping forward by half a second
+throughout the timeline. It includes a final window reaching the last frame,
+keeps the original crop/normalization, and scores each window separately. Video
+decoding is sequential and image/tensor memory is bounded to a short batch.
+The model loads once. Longer videos take more CPU time; progress is printed.
+
+```powershell
+# Scan and save per-window scores and approximate review timestamps.
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\Videos\clip.mp4" --scan --output outputs\scan-review.json
+
+# Original whole-video baseline for comparison.
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\Videos\clip.mp4"
+
+# Experiment with a more sensitive threshold on labeled validation footage.
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\Videos\clip.mp4" --scan --threshold 0.2
+```
+
+The output path must have an existing parent and must not already exist.
+`windows` contains individual scores; `review_segments` merges overlapping
+flagged windows. `violence_score` is the maximum window score in scan mode,
+not the original whole-video score. `--stride-seconds` accepts values above 0
+and at most 1; the default is 0.5. `--threshold` applies only to scan mode.
+
+**This addresses temporal sampling, not proven model accuracy.** The classifier
+was trained on averaged whole-video features. Its saved 0.30 threshold has not
+been validated for individual windows or a maximum across many windows. Scanning
+more windows can increase false alarms; lowering the threshold can increase them
+further. The output explicitly marks `threshold_validated_for_scan: false`.
+Review intervals are approximate candidate timestamps, not validated event bounds.
+The center crop can still omit action near the edges, and the frozen encoder may
+not recognize unfamiliar camera views even when the event is sampled.
+
+To assess improvement, collect videos it currently misses with event start/end
+times and representative normal recordings. Compare event recall and false alerts
+per video/hour on held-out recordings. Tune thresholds on separate validation
+recordings; keep recordings from the same source together. If scores remain low
+over visible violence, train on representative examples and consider fine-tuning
+the video encoder. Repeating the existing head-only training does not adapt that
+encoder. The previous 96.31% dataset accuracy does not measure this scan mode or
+performance on the user's camera.
+
 ## Reproduce on another computer
 
 To run the existing trained model after cloning, follow [FRIEND_SETUP.md](FRIEND_SETUP.md). A clone alone does not include trained model files or the virtual environment.

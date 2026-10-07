@@ -33,10 +33,14 @@ your-clone/
 Double-click `run_violence.cmd`, or run:
 
 ```powershell
-.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\short-video.mp4"
+.\.venv\Scripts\python.exe -m trace.predict_violence --source "C:\path\to\short-video.mp4" --scan
 ```
 
 CPU is the default. An NVIDIA GPU is not required for this command. The classifier file is small because the 127 MiB pretrained video encoder is stored separately. The predictor checks that its encoder hash matches the classifier's expected hash.
+
+The launcher checks overlapping windows and reports candidate timestamps. This
+scan mode has not been validated for accuracy; review flagged intervals. Omit
+`--scan` to use the original three-sample, whole-video classifier.
 
 ## Create a shareable model ZIP on the training computer
 

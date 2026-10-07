@@ -1,7 +1,7 @@
 {
   "camera_id": "camera_01",
   "name": "Demo Camera",
-  "source": "storage/demo.avi",
+  "source": "0",
   "display_width": 960,
   "fallback_fps": 25,
   "reconnect_attempts": 3,
