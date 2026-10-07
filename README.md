@@ -24,7 +24,18 @@ Keep an existing virtual environment if it already works. `requirements-tested.t
 
 Open **http://127.0.0.1:8765**. In Settings, set the source to `0` for a webcam or a video file path; the example's `storage/demo.avi` is a placeholder. Use Camera preview to capture a frame, stop the camera, then draw a restricted zone in Zones. Start AI monitoring to detect people, track temporary IDs, and alert immediately on entry. Recordings can save clips when people appear.
 
-See the [camera dashboard guide](docs/CAMERA_DASHBOARD.md) for settings, the zone editor, CLI modes, clip recording, and limits. The dashboard's alerts concern restricted-area entry; it does not yet run the violence classifier automatically.
+See the [camera dashboard guide](docs/CAMERA_DASHBOARD.md) for settings, the zone editor, CLI modes, clip recording, and limits.
+
+**Violence review** connects the trained classifier to the same dashboard. Upload
+a video, select **Analyse violence** on a recording, or enable **Record entry
+clips** and **Automatically analyse entry clips** in Settings. Completed clips
+are queued for background analysis. The review page shows progress, cancellation,
+video playback, a score timeline, candidate timestamps, and a downloadable JSON
+report. See the [integrated workflow](docs/VIOLENCE_DASHBOARD.md).
+
+Automatic analysis checks recorded entry clips after they finish; it is not
+continuous violence detection across the live feed. Restricted-zone entry alerts
+remain separate from experimental violence-review results.
 
 ## Trained violence classifier
 

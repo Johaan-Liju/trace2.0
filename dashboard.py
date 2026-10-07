@@ -24,6 +24,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        dashboard.scans.close()
         dashboard.stop()
         if dashboard.worker:
             dashboard.worker.join()

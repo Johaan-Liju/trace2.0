@@ -3,13 +3,15 @@
 import copy
 import json
 import logging
+import mimetypes
+import re
 import secrets
 import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import cv2
 
@@ -17,6 +19,7 @@ from services.clip_service import ClipRecorder
 from services.event_service import EntryAlerts
 from services.utils import Utils
 from services.video_service import Camera, Detector, Tracker, detect_and_track
+from services.violence_service import ViolenceScans
 
 
 class Dashboard:
@@ -40,6 +43,8 @@ class Dashboard:
         self.events = deque(maxlen=500)
         self.clip_paths = {}
         self.zone_counts = {}
+        self.scans = ViolenceScans()
+        self.clip_scan_errors = {}
 
     def busy(self):
         return self.worker is not None and self.worker.is_alive()
@@ -54,8 +59,10 @@ class Dashboard:
                 "busy": self.busy(), "has_frame": self.raw_jpeg is not None,
                 "frames": self.frames, "people": self.people, "fps": round(self.fps, 1),
                 "total_alerts": self.total_alerts, "events": list(reversed(self.events)),
-                "clips": [{"id": key, "name": path.name, "url": f"/clips/{key}"}
+                "clips": [{"id": key, "name": path.name, "url": f"/clips/{key}",
+                           "scan_error": self.clip_scan_errors.get(key, '')}
                           for key, path in reversed(list(self.clip_paths.items()))],
+                "violence": self.scans.snapshot(),
                 "zone_counts": dict(self.zone_counts),
                 "config": {"name": config["name"], "camera_id": config["camera_id"],
                            "source": "" if source_type == "rtsp" else config["source"],
@@ -66,6 +73,7 @@ class Dashboard:
                            "zones": copy.deepcopy(Utils.get_zones(config)),
                            "alerts": settings.get("alerts", True),
                            "clips": settings.get("clips", False),
+                           "auto_scan": settings.get("auto_scan", False),
                            "sound": config.get("alerts", {}).get("sound", True)},
             }
 
@@ -89,7 +97,7 @@ class Dashboard:
                 raw["tracking"]["new_track_thresh"] = payload["confidence"]
             if "zones" in payload:
                 raw["zones"] = payload["zones"]
-            for field in ("alerts", "clips", "sound"):
+            for field in ("alerts", "clips", "sound", "auto_scan"):
                 if field in payload:
                     if type(payload[field]) is not bool:
                         raise ValueError(f"{field} must be true or false.")
@@ -97,6 +105,8 @@ class Dashboard:
                         raw.setdefault("alerts", {})["sound"] = payload[field]
                     else:
                         raw.setdefault("dashboard", {})[field] = payload[field]
+            if raw.get('dashboard', {}).get('auto_scan', False) and not raw.get('dashboard', {}).get('clips', False):
+                raise ValueError('Enable Record entry clips to automatically scan recordings.')
             Utils.get_detection_config(raw)
             Utils.get_tracking_config(raw)
             Utils.get_zones(raw)
@@ -137,12 +147,33 @@ class Dashboard:
 
     def _add_clip(self, path):
         if path:
+            key = secrets.token_hex(12)
             with self.lock:
-                self.clip_paths[secrets.token_hex(12)] = Path(path)
+                self.clip_paths[key] = Path(path)
+                auto_scan = self.config.get('dashboard', {}).get('auto_scan', False)
+            if auto_scan:
+                try:
+                    self.scans.enqueue(path, clip_id=key)
+                except (ValueError, OSError) as error:
+                    with self.lock:
+                        self.clip_scan_errors[key] = str(error)
+
+    def scan_clip(self, key):
+        if not isinstance(key, str):
+            raise ValueError('Choose a recording to analyse.')
+        with self.lock:
+            path = self.clip_paths.get(key)
+        if path is None:
+            raise ValueError('Recording not found in this dashboard session.')
+        self.scans.enqueue(path, clip_id=key)
+        with self.lock:
+            self.clip_scan_errors.pop(key, None)
+        return self.snapshot()
 
     def _run(self, config, mode):
         camera, recorder = Camera(config), None
         final_status = "idle"
+        stage = 'settings'
         try:
             zones = Utils.get_zones(config)
             settings = config.get("dashboard", {})
@@ -150,17 +181,21 @@ class Dashboard:
             alerts = EntryAlerts(config, zones) if monitor and settings.get("alerts", True) and any(
                 zone["type"] == "restricted" for zone in zones) else None
             recorder = ClipRecorder(config) if monitor and settings.get("clips", False) else None
+            stage = 'model'
             detector = Detector(config) if monitor else None
             if self.stop_event.is_set():
                 return
+            stage = 'camera_open'
             if not camera.open():
                 raise ConnectionError("Cannot open the camera. Check your source in Settings.")
             frame_rate = camera.get_fps()
+            stage = 'tracking'
             tracker = Tracker(config, frame_rate) if monitor else None
             connection = camera.connection_id
             frame_number = 0
             while not self.stop_event.is_set():
                 started = time.monotonic()
+                stage = 'camera_read'
                 frame = camera.read_frame()
                 if self.stop_event.is_set():
                     break
@@ -178,13 +213,17 @@ class Dashboard:
                         self._add_clip(recorder.reset())
                     connection = camera.connection_id
                 timestamp = frame_number / frame_rate if camera.source_type == "file" else started
+                stage = 'detection'
                 tracks = detect_and_track(frame, detector, tracker, timestamp)
                 tracks = Utils.assign_zones(tracks, zones, frame.shape)
+                stage = 'alerts'
                 entries = alerts.check_entries(tracks, tracker.get_remembered_ids()) if alerts else []
                 if alerts:
                     alerts.notify(entries)
                 if recorder:
+                    stage = 'recording'
                     self._add_clip(recorder.update(frame, tracks, tracker.get_remembered_ids(), timestamp))
+                stage = 'preview'
                 annotated = Utils.draw_frame_results(frame, tracks, zones, monitor)
                 preview = Utils.resize_frame(annotated, config["display_width"])
                 raw = Utils.resize_frame(frame, config["display_width"])
@@ -206,9 +245,9 @@ class Dashboard:
                     self.status = "stopping" if self.stop_event.is_set() else ("monitoring" if monitor else "preview")
         except Exception as error:
             # Native/model exceptions may contain a private RTSP source or credentials.
-            logging.error("Dashboard camera worker failed (%s).", type(error).__name__)
+            logging.error("Dashboard camera worker failed during %s (%s).", stage, type(error).__name__)
             with self.lock:
-                self.error = "Camera processing failed. Check the source, model, and settings, then try again."
+                self.error = self.camera_error(stage, camera.source_type, error)
             final_status = "error"
         finally:
             camera.close()
@@ -223,6 +262,30 @@ class Dashboard:
                 self.status = final_status
                 self.people, self.fps = 0, 0
                 self.zone_counts = {}
+
+    @staticmethod
+    def camera_error(stage, source_type, error):
+        """Describe the failing operation without exposing native exception credentials."""
+        if stage == 'camera_open':
+            if source_type == 'webcam':
+                return ('Cannot open the webcam. Close other camera apps, allow desktop camera access in Windows, '
+                        'and run dashboard.py from a normal terminal if this server is sandboxed.')
+            if source_type == 'file':
+                return ('The configured video file does not exist. Choose a valid source in Settings.'
+                        if isinstance(error, FileNotFoundError) else
+                        'Cannot open the video file. Check its format and source path in Settings.')
+            return 'Cannot connect to the camera stream. Check its address, credentials, and network connection.'
+        messages = {
+            'settings': 'Camera settings could not be initialized. Check zones, alerts, and FFmpeg if clips are enabled.',
+            'model': 'The person-detection model could not load. Check the YOLO weights and installed dependencies.',
+            'tracking': 'Person tracking could not start. Check the tracking settings and installed dependencies.',
+            'camera_read': 'The source opened but frames could not be read. Check the camera connection or video codec.',
+            'detection': 'Person detection or tracking failed on a frame. Check the model device and available memory.',
+            'alerts': 'Zone alert processing failed. Check the configured zones and alert settings.',
+            'recording': 'The entry clip could not be recorded. Check FFmpeg, folder permissions, and available disk space.',
+            'preview': 'The camera preview could not be prepared. Check the display width and video frames.',
+        }
+        return messages.get(stage, 'Camera processing failed. Check the camera settings and try again.')
 
 
 def create_server(dashboard, port=8765):
@@ -256,7 +319,86 @@ def create_server(dashboard, port=8765):
                 pass
 
         def _json(self, data, status=200):
+            # Windows can reset a connection closed with unread request bytes,
+            # hiding the useful rejection response from the browser.
+            remaining = getattr(self, '_body_remaining', 0)
+            if status >= 400 and 0 < remaining <= 65536:
+                try:
+                    self.connection.settimeout(2)
+                    self.rfile.read(remaining)
+                except OSError:
+                    pass
+                self._body_remaining = 0
             self._send(json.dumps(data).encode(), status=status)
+
+        def _media(self, path):
+            """Serve a registered video with byte ranges for browser seeking."""
+            size = path.stat().st_size
+            start, end, status = 0, size - 1, 200
+            requested = self.headers.get('Range')
+            if requested:
+                match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested)
+                if not match or not any(match.groups()):
+                    self._send(b'', status=416, extra={'Content-Range': f'bytes */{size}'})
+                    return
+                left, right = match.groups()
+                if left:
+                    start = int(left)
+                    end = min(int(right), end) if right else end
+                else:
+                    start = max(0, size - int(right))
+                if start > end or start >= size:
+                    self._send(b'', status=416, extra={'Content-Range': f'bytes */{size}'})
+                    return
+                status = 206
+            with path.open('rb') as source:
+                self.send_response(status)
+                self.send_header('Content-Type', mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
+                self.send_header('Content-Length', str(max(0, end - start + 1)))
+                self.send_header('Accept-Ranges', 'bytes')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                if status == 206:
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+                self.end_headers()
+                source.seek(start)
+                remaining = end - start + 1
+                try:
+                    while remaining > 0:
+                        chunk = source.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+
+        def _upload(self, length):
+            if not 0 < length <= dashboard.scans.MAX_UPLOAD:
+                raise ValueError('Choose a non-empty video up to 256 MB.')
+            name = Path(unquote(self.headers.get('X-File-Name', 'video.mp4')).replace('\\', '/')).name
+            suffix = Path(name).suffix.lower()
+            if suffix not in dashboard.scans.EXTENSIONS:
+                raise ValueError('Choose an MP4, AVI, MOV, MKV, or WebM video.')
+            folder = dashboard.scans.storage / 'uploads'
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / (secrets.token_hex(16) + suffix)
+            try:
+                self.connection.settimeout(30)
+                with path.open('xb') as output:
+                    remaining = length
+                    while remaining:
+                        chunk = self.rfile.read(min(65536, remaining))
+                        if not chunk:
+                            raise ValueError('The video upload was interrupted. Please try again.')
+                        output.write(chunk)
+                        remaining -= len(chunk)
+                        self._body_remaining = remaining
+                dashboard.scans.enqueue(path, name=name[:200])
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
+            self._json(dashboard.snapshot())
 
         def do_GET(self):
             if not self._allowed():
@@ -265,6 +407,15 @@ def create_server(dashboard, port=8765):
             path = urlsplit(self.path).path
             if path == "/api/state":
                 self._json(dashboard.snapshot())
+            elif path.startswith('/api/violence/'):
+                parts = path.split('/')
+                file = dashboard.scans.file(parts[3], parts[4]) if len(parts) == 5 else None
+                if file is None or not file.is_file():
+                    self._json({'error': 'Scan file not found.'}, 404)
+                elif parts[4] == 'video':
+                    self._media(file)
+                else:
+                    self._send(file.read_bytes(), extra={'Content-Disposition': 'attachment; filename="violence-report.json"'})
             elif path in ("/api/frame.jpg", "/api/raw.jpg"):
                 with dashboard.lock:
                     frame = dashboard.raw_jpeg if path == "/api/raw.jpg" else dashboard.jpeg
@@ -291,24 +442,35 @@ def create_server(dashboard, port=8765):
                         pass
                 else:
                     self._json({"error": "Clip not found."}, 404)
-            elif path in ("/", "/app.js", "/style.css"):
+            elif path in ("/", "/app.js", "/style.css", "/violence.js", "/violence.css"):
                 name, mime = {"/": ("index.html", "text/html; charset=utf-8"),
                               "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-                              "/style.css": ("style.css", "text/css; charset=utf-8")}[path]
+                              "/style.css": ("style.css", "text/css; charset=utf-8"),
+                              "/violence.js": ("violence.js", "text/javascript; charset=utf-8"),
+                              "/violence.css": ("violence.css", "text/css; charset=utf-8")}[path]
                 self._send((assets / name).read_bytes(), mime)
             else:
                 self._json({"error": "Not found."}, 404)
 
         def do_POST(self):
+            try:
+                self._body_remaining = max(0, int(self.headers.get('Content-Length', '0')))
+            except ValueError:
+                self._body_remaining = 0
             if not self._allowed() or not secrets.compare_digest(
                     self.headers.get("X-Trace-Token", ""), dashboard.token):
                 self._json({"error": "Refresh the local dashboard and try again."}, 403)
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if urlsplit(self.path).path == '/api/violence/upload':
+                    self._upload(length)
+                    return
                 if not 0 < length <= 65536:
                     raise ValueError("Request is missing or too large.")
-                payload = json.loads(self.rfile.read(length))
+                body = self.rfile.read(length)
+                self._body_remaining = 0
+                payload = json.loads(body)
                 if not isinstance(payload, dict):
                     raise ValueError("Request must be a JSON object.")
                 path = urlsplit(self.path).path
@@ -318,6 +480,11 @@ def create_server(dashboard, port=8765):
                     result = dashboard.stop()
                 elif path == "/api/config":
                     result = dashboard.save(payload)
+                elif path == '/api/violence/clip':
+                    result = dashboard.scan_clip(payload.get('clip_id'))
+                elif path == '/api/violence/cancel':
+                    dashboard.scans.cancel(payload.get('id'))
+                    result = dashboard.snapshot()
                 else:
                     self._json({"error": "Not found."}, 404)
                     return
@@ -325,6 +492,6 @@ def create_server(dashboard, port=8765):
             except (ValueError, RuntimeError) as error:
                 self._json({"error": str(error)}, 400)
             except OSError:
-                self._json({"error": "Could not access the configuration file. Check permissions."}, 500)
+                self._json({"error": "Could not access the local file. Check permissions and available space."}, 500)
 
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)

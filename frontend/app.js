@@ -18,6 +18,7 @@ const labels = {
   zones: ["Zones", "draw the areas trace should watch."],
   activity: ["Activity", "every restricted-zone entry this session."],
   recordings: ["Recordings", "entry clips, saved on this device."],
+  violence: ["Violence review", "analyse footage and review candidate events."],
   settings: ["Settings", "camera source and detection."],
 };
 const statuses = {idle: "Standby", starting: "Starting", monitoring: "Monitoring", preview: "Preview", stopping: "Stopping", ended: "Video ended", error: "Needs attention"};
@@ -86,6 +87,7 @@ function renderControls() {
   $("add-zone").disabled = busy || pending || !connected || !state?.has_frame;
   $("settings-hint").textContent = busy ? "Stop monitoring to edit these settings." : "Changes apply the next time you start.";
   document.querySelectorAll(".zone-edit, .zone-delete").forEach((button) => { button.disabled = busy || pending || !connected; });
+  window.renderViolenceControls?.();
 }
 
 function fillSettings() {
@@ -99,6 +101,7 @@ function fillSettings() {
   $("setting-alerts").checked = c.alerts;
   $("setting-clips").checked = c.clips;
   $("setting-sound").checked = c.sound;
+  $("setting-auto-scan").checked = c.auto_scan;
 }
 
 function renderEvents() {
@@ -167,7 +170,17 @@ function renderClips() {
     const link = element("a", "button", "↓ Download MP4");
     link.href = clip.url;
     link.download = clip.name;
-    row.append(element("span", "empty-symbol", "▻"), body, link);
+    if (clip.scan_error) body.append(element("p", "scan-error", clip.scan_error));
+    const analyse = element("button", "button scan-recording", "Analyse violence");
+    analyse.addEventListener("click", async () => {
+      const result = await action("/api/violence/clip", {clip_id: clip.id});
+      if (result) {
+        selectedScan = result.violence.jobs.find((job) => job.clip_id === clip.id)?.id || null;
+        showPage("violence");
+        renderViolence();
+      }
+    });
+    row.append(element("span", "empty-symbol", "▻"), body, analyse, link);
     $("clips-list").append(row);
   });
 }
@@ -201,6 +214,7 @@ function render() {
   renderEvents();
   renderClips();
   renderZones();
+  window.renderViolence?.();
   renderControls();
 }
 
@@ -314,7 +328,8 @@ $("settings-form").addEventListener("input", () => { settingsDirty = true; $("co
 $("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const payload = {name: $("setting-name").value, confidence: Number($("setting-confidence").value) / 100,
-    alerts: $("setting-alerts").checked, sound: $("setting-sound").checked, clips: $("setting-clips").checked};
+    alerts: $("setting-alerts").checked, sound: $("setting-sound").checked, clips: $("setting-clips").checked,
+    auto_scan: $("setting-auto-scan").checked};
   if ($("setting-source").value.trim()) payload.source = $("setting-source").value;
   const result = await action("/api/config", payload);
   if (result) { settingsDirty = false; fillSettings(); notice("Settings saved. They’ll apply the next time you start monitoring."); }

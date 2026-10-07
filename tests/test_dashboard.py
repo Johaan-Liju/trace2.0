@@ -106,7 +106,28 @@ class DashboardTests(unittest.TestCase):
             snapshot = self.dashboard.snapshot()
             self.assertEqual(snapshot["status"], "error")
             self.assertNotIn("secret", json.dumps(snapshot))
+            self.assertIn('model could not load', snapshot['error'])
             camera_class.return_value.close.assert_called_once()
+
+    def test_webcam_open_failure_explains_access_problem(self):
+        with patch('services.web_service.Camera') as camera_class:
+            camera = camera_class.return_value
+            camera.source_type = 'webcam'
+            camera.open.return_value = False
+            self.dashboard.start('preview')
+            self.dashboard.worker.join(5)
+            snapshot = self.dashboard.snapshot()
+            self.assertEqual(snapshot['status'], 'error')
+            self.assertIn('Cannot open the webcam', snapshot['error'])
+            self.assertIn('normal terminal', snapshot['error'])
+            camera.close.assert_called_once()
+
+    def test_camera_error_messages_do_not_expose_private_stream_details(self):
+        error = RuntimeError('rtsp://user:secret@camera/private')
+        for stage in ('camera_open', 'camera_read', 'model', 'tracking', 'detection', 'recording', 'preview'):
+            message = Dashboard.camera_error(stage, 'rtsp', error)
+            self.assertNotIn('secret', message)
+            self.assertNotIn('rtsp://', message)
 
     def test_http_preview_security_and_clip_download(self):
         video = Path(self.folder.name) / "input.avi"
