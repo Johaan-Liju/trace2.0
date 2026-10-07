@@ -14,11 +14,11 @@ let lastEvents = "";
 let lastClips = "";
 let lastZones = "";
 const labels = {
-  overview: ["Overview", "A clear view of what’s happening, as it happens."],
-  zones: ["Zones", "Draw the boundaries. TRACE will watch for entries."],
-  activity: ["Activity", "Every restricted entry, in one place."],
-  recordings: ["Recordings", "The moments that matter, saved on your device."],
-  settings: ["Settings", "Make this view your own."],
+  overview: ["Overview", "live camera, zones and alerts."],
+  zones: ["Zones", "draw the areas trace should watch."],
+  activity: ["Activity", "every restricted-zone entry this session."],
+  recordings: ["Recordings", "entry clips, saved on this device."],
+  settings: ["Settings", "camera source and detection."],
 };
 const statuses = {idle: "Standby", starting: "Starting", monitoring: "Monitoring", preview: "Preview", stopping: "Stopping", ended: "Video ended", error: "Needs attention"};
 
@@ -109,7 +109,7 @@ function renderEvents() {
     const parent = $(id);
     parent.replaceChildren();
     if (!state.events.length) {
-      parent.append(empty("Nothing to report", "New zone entries will appear here when monitoring is active."));
+      parent.append(empty("no alerts yet", "entries into a restricted zone show up here."));
     }
     state.events.slice(0, limit).forEach((event) => {
       const row = element("div", "event");
@@ -134,7 +134,7 @@ function renderZones() {
   $("zones-list").replaceChildren();
   if (!zones.length) {
     $("zone-summary").append(element("p", "empty-copy", "No zones yet. Capture a camera preview, then draw your first restricted area in Zones."));
-    $("zones-list").append(empty("Give TRACE an area to watch", "Start Camera preview, stop it, then choose Draw a zone to mark an area.", "⌗"));
+    $("zones-list").append(empty("no zones yet", "start camera preview, stop it, then draw a zone.", "⌗"));
   }
   zones.forEach((zone) => {
     const count = state.zone_counts[zone.id] || 0;
@@ -159,7 +159,7 @@ function renderClips() {
   if (key === lastClips) return;
   lastClips = key;
   $("clips-list").replaceChildren();
-  if (!state.clips.length) $("clips-list").append(empty("No recordings yet", "Enable Record entry clips in Settings. New people appearing in view will trigger a clip.", "▻"));
+  if (!state.clips.length) $("clips-list").append(empty("no clips yet", "turn on record entry clips in settings.", "▻"));
   state.clips.forEach((clip, index) => {
     const row = element("div", "clip-row");
     const body = element("div");
@@ -176,7 +176,7 @@ function render() {
   if (!state) return;
   const live = ["monitoring", "preview"].includes(state.status);
   $("camera-status").textContent = statuses[state.status] || state.status;
-  $("camera-detail").textContent = state.busy ? `${state.config.source_type === "file" ? "Video file" : "Camera"} · ${state.config.camera_id}` : "Ready when you are";
+  $("camera-detail").textContent = state.busy ? `${state.config.source_type === "file" ? "Video file" : "Camera"} · ${state.config.camera_id}` : "idle";
   $("camera-name").textContent = state.config.name;
   $("people-count").textContent = state.people;
   $("alert-count").textContent = state.total_alerts;
@@ -218,7 +218,7 @@ async function pollState() {
     }
   } catch {
     connected = false;
-    notice("Cannot reach TRACE. Keep dashboard.py running; this page will reconnect automatically.", true);
+    notice("cannot reach trace. keep dashboard.py running; this page reconnects on its own.", true);
     $("camera-status").textContent = "Disconnected";
     $("feed-badge").textContent = "DISCONNECTED";
     $("feed-badge").classList.remove("online");
@@ -347,3 +347,6 @@ showPage(labels[location.hash.slice(1)] ? location.hash.slice(1) : "overview");
 renderControls();
 pollState();
 pollFrame();
+
+// feed timecode
+setInterval(() => { const t = $("feed-time"); if (t) t.textContent = new Date().toLocaleTimeString("en-GB"); }, 1000);
